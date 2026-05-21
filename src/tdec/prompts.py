@@ -68,7 +68,8 @@ policy preference. Reward debate quality: breadth, responsiveness, evidence,
 moral reasoning, institutional reasoning, strategic clarity, and closing
 weighing.
 
-Return only valid JSON. Do not wrap it in Markdown.
+Return only valid compact JSON. Do not wrap it in Markdown. Keep all string
+values short enough that the entire response can fit comfortably in 900 tokens.
 """
 
 
@@ -83,7 +84,7 @@ Motion: {transcript.topic.motion}
 Transcript:
 {turns}
 
-Return this JSON shape:
+Return exactly this compact JSON shape:
 {{
   "winner": "pro" | "con" | "tie",
   "winner_label": "A" | "B" | "tie",
@@ -98,12 +99,11 @@ Return this JSON shape:
     "institutional_reasoning": {{"pro": 0, "con": 0}},
     "strategic_clarity": {{"pro": 0, "con": 0}}
   }},
-  "decisive_reasons": ["short reason"],
+  "decisive_reasons": ["reason under 120 chars", "reason under 120 chars", "reason under 120 chars"],
   "audience_estimate": {{"pro_votes": 0, "con_votes": 0}},
-  "summary": "brief judgement"
+  "summary": "one sentence under 200 chars"
 }}
 
 Scores are 0-100 for side totals and 0-10 for rubric cells. Audience votes must
 sum to 100. Use "tie" only when genuinely inseparable.
 """
-

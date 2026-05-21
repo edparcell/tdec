@@ -72,6 +72,7 @@ def summarize(
             "pro_wins": _count_winners(debate_judgements, "pro"),
             "con_wins": _count_winners(debate_judgements, "con"),
             "ties": _count_winners(debate_judgements, "tie"),
+            "parse_errors": _count_winners(debate_judgements, "parse_error"),
         })
     return {
         "run_dir": str(run_dir),
@@ -81,4 +82,3 @@ def summarize(
 
 def _count_winners(judgements: list[Judgement], winner: str) -> int:
     return sum(1 for judgement in judgements if judgement.parsed.get("winner") == winner)
-

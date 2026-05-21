@@ -42,8 +42,8 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
 
     assert len(summary["debates"]) == 6
     assert all(debate["judgement_count"] == 2 for debate in summary["debates"])
+    assert all(debate["parse_errors"] == 0 for debate in summary["debates"])
     assert len(list((run_dir / "debates").glob("*.json"))) == 6
     assert len(list((run_dir / "judgements").glob("*.json"))) == 12
     assert (run_dir / "summary.json").is_file()
     assert (run_dir / "summary.md").is_file()
-

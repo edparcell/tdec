@@ -37,5 +37,4 @@ judges:
     model: inclusionai/ring-2.6-1t
     api_key_env: OPENROUTER_API_KEY
     temperature: 0.2
-    max_tokens: 1600
-
+    max_tokens: 2400

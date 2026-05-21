@@ -42,6 +42,7 @@ def write_summary(run_dir: Path, summary: dict) -> None:
         lines.append(f"- Pro wins: {debate['pro_wins']}")
         lines.append(f"- Con wins: {debate['con_wins']}")
         lines.append(f"- Ties: {debate['ties']}")
+        lines.append(f"- Parse errors: {debate['parse_errors']}")
         lines.append("")
     (run_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 

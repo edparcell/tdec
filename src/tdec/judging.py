@@ -24,7 +24,15 @@ def judge_debate(
             {"role": "user", "content": judge_prompt(transcript)},
         ],
     )
-    parsed = parse_json_response(raw)
+    try:
+        parsed = parse_json_response(raw)
+    except (json.JSONDecodeError, ValueError) as e:
+        parsed = {
+            "winner": "parse_error",
+            "winner_label": "parse_error",
+            "confidence": 0,
+            "error": str(e),
+        }
     return Judgement(
         debate_id=transcript.id,
         judge_model_id=judge_model.id,
@@ -45,4 +53,3 @@ def parse_json_response(text: str) -> dict:
     if not isinstance(value, dict):
         raise ValueError("Judge response JSON must be an object")
     return value
-

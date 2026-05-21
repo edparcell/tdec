@@ -29,7 +29,14 @@ class DebateTranscript:
     turns: list[DebateTurn]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return {
+            "id": self.id,
+            "topic": asdict(self.topic),
+            "pro_model": public_model_dict(self.pro_model),
+            "con_model": public_model_dict(self.con_model),
+            "rounds": self.rounds,
+            "turns": [asdict(turn) for turn in self.turns],
+        }
 
 
 @dataclass(frozen=True)
@@ -42,3 +49,8 @@ class Judgement:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
+def public_model_dict(model: ModelConfig) -> dict[str, Any]:
+    data = asdict(model)
+    data["api_key"] = "<redacted>" if data.get("api_key") else None
+    return data

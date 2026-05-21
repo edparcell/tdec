@@ -1,5 +1,6 @@
 from tdec.config import ModelConfig, TopicConfig
 from tdec.debate import debate_pairings, run_debate
+from tdec.debate_types import DebateTranscript, DebateTurn
 
 
 class StubClient:
@@ -54,3 +55,32 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
     assert "Go wide" in client.calls[0][1]
     assert "Motion text" in client.calls[1][1]
 
+
+def test_transcript_artifact_redacts_api_keys() -> None:
+    topic = TopicConfig(
+        id="topic",
+        motion="Motion text",
+        pro_position="Pro position",
+        con_position="Con position",
+    )
+    transcript = DebateTranscript(
+        id="debate",
+        topic=topic,
+        pro_model=ModelConfig(id="pro", provider="openrouter", model="model-a", api_key="secret"),
+        con_model=ModelConfig(id="con", provider="openrouter", model="model-b", api_key="secret"),
+        rounds=1,
+        turns=[
+            DebateTurn(
+                speaker_label="A",
+                speaker_model_id="pro",
+                side="pro",
+                turn_number=1,
+                content="hello",
+            ),
+        ],
+    )
+
+    data = transcript.to_dict()
+
+    assert data["pro_model"]["api_key"] == "<redacted>"
+    assert data["con_model"]["api_key"] == "<redacted>"
