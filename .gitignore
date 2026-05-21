@@ -1,0 +1,8 @@
+.venv/
+.idea/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.uv-cache/
+runs/*
+!runs/.gitkeep
