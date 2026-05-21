@@ -11,12 +11,37 @@ Side = Literal["pro", "con"]
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    total_tokens: int | None
+
+
+@dataclass(frozen=True)
+class ModelCallMetrics:
+    model_id: str
+    provider: str
+    model: str
+    latency_seconds: float
+    usage: TokenUsage
+    cost_usd: float | None
+    cost_error: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelCallResult:
+    content: str
+    metrics: ModelCallMetrics
+
+
+@dataclass(frozen=True)
 class DebateTurn:
     speaker_label: str
     speaker_model_id: str
     side: Side
     turn_number: int
     content: str
+    metrics: ModelCallMetrics | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +70,7 @@ class Judgement:
     judge_model_id: str
     raw_text: str
     parsed: dict[str, Any]
+    metrics: ModelCallMetrics | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

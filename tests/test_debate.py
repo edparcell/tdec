@@ -1,15 +1,21 @@
 from tdec.config import ModelConfig, TopicConfig
 from tdec.debate import debate_pairings, run_debate
-from tdec.debate_types import DebateTranscript, DebateTurn
+from tdec.debate_types import (
+    DebateTranscript,
+    DebateTurn,
+    ModelCallMetrics,
+    ModelCallResult,
+    TokenUsage,
+)
 
 
 class StubClient:
     def __init__(self) -> None:
         self.calls = []
 
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> str:
+    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
         self.calls.append((model.id, messages[-1]["content"]))
-        return f"{model.id} response {len(self.calls)}"
+        return _call_result(model, f"{model.id} response {len(self.calls)}")
 
 
 def test_debate_pairings_runs_each_pair_both_ways() -> None:
@@ -52,6 +58,8 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
     assert len(transcript.turns) == 6
     assert [turn.side for turn in transcript.turns] == ["pro", "con", "pro", "con", "pro", "con"]
     assert [turn.turn_number for turn in transcript.turns] == [1, 1, 2, 2, 3, 3]
+    assert transcript.turns[0].metrics is not None
+    assert transcript.turns[0].metrics.cost_usd == 0.001
     assert "Go wide" in client.calls[0][1]
     assert "Motion text" in client.calls[1][1]
 
@@ -84,3 +92,17 @@ def test_transcript_artifact_redacts_api_keys() -> None:
 
     assert data["pro_model"]["api_key"] == "<redacted>"
     assert data["con_model"]["api_key"] == "<redacted>"
+
+
+def _call_result(model: ModelConfig, content: str) -> ModelCallResult:
+    return ModelCallResult(
+        content=content,
+        metrics=ModelCallMetrics(
+            model_id=model.id,
+            provider=model.provider,
+            model=model.model,
+            latency_seconds=0.25,
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            cost_usd=0.001,
+        ),
+    )

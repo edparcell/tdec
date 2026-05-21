@@ -73,12 +73,75 @@ def summarize(
             "con_wins": _count_winners(debate_judgements, "con"),
             "ties": _count_winners(debate_judgements, "tie"),
             "parse_errors": _count_winners(debate_judgements, "parse_error"),
+            "debate_latency_seconds": _sum_debate_latency(debate),
+            "judging_latency_seconds": _sum_judgement_latency(debate_judgements),
+            "debate_cost_usd": _sum_debate_cost(debate),
+            "judging_cost_usd": _sum_judgement_cost(debate_judgements),
+            "cost_errors": _cost_errors(debate, debate_judgements),
         })
     return {
         "run_dir": str(run_dir),
+        "total_cost_usd": _sum_optional_costs(
+            debate["debate_cost_usd"] for debate in debate_summaries
+        )
+        + _sum_optional_costs(debate["judging_cost_usd"] for debate in debate_summaries)
+        if _all_costs_known(debate_summaries)
+        else None,
+        "cost_errors": [
+            error for debate in debate_summaries for error in debate["cost_errors"]
+        ],
+        "total_latency_seconds": sum(
+            debate["debate_latency_seconds"] + debate["judging_latency_seconds"]
+            for debate in debate_summaries
+        ),
         "debates": debate_summaries,
     }
 
 
 def _count_winners(judgements: list[Judgement], winner: str) -> int:
     return sum(1 for judgement in judgements if judgement.parsed.get("winner") == winner)
+
+
+def _sum_debate_latency(debate: DebateTranscript) -> float:
+    return sum(turn.metrics.latency_seconds for turn in debate.turns if turn.metrics is not None)
+
+
+def _sum_judgement_latency(judgements: list[Judgement]) -> float:
+    return sum(j.metrics.latency_seconds for j in judgements if j.metrics is not None)
+
+
+def _sum_debate_cost(debate: DebateTranscript) -> float | None:
+    return _sum_cost(turn.metrics for turn in debate.turns)
+
+
+def _sum_judgement_cost(judgements: list[Judgement]) -> float | None:
+    return _sum_cost(j.metrics for j in judgements)
+
+
+def _sum_cost(metrics) -> float | None:
+    values = [metric.cost_usd for metric in metrics if metric is not None]
+    if any(value is None for value in values):
+        return None
+    return sum(values)
+
+
+def _all_costs_known(debate_summaries: list[dict]) -> bool:
+    return all(
+        debate["debate_cost_usd"] is not None and debate["judging_cost_usd"] is not None
+        for debate in debate_summaries
+    )
+
+
+def _sum_optional_costs(values) -> float:
+    return sum(value for value in values if value is not None)
+
+
+def _cost_errors(debate: DebateTranscript, judgements: list[Judgement]) -> list[str]:
+    errors = []
+    for turn in debate.turns:
+        if turn.metrics is not None and turn.metrics.cost_error is not None:
+            errors.append(f"{turn.speaker_model_id}: {turn.metrics.cost_error}")
+    for judgement in judgements:
+        if judgement.metrics is not None and judgement.metrics.cost_error is not None:
+            errors.append(f"{judgement.judge_model_id}: {judgement.metrics.cost_error}")
+    return errors

@@ -33,6 +33,11 @@ def write_judgement(run_dir: Path, judgement: Judgement) -> Path:
 def write_summary(run_dir: Path, summary: dict) -> None:
     write_json(run_dir / "summary.json", summary)
     lines = ["# TDEC Summary", ""]
+    lines.append(f"- Total cost: {_format_cost(summary['total_cost_usd'])}")
+    lines.append(f"- Total latency: {summary['total_latency_seconds']:.2f}s")
+    if summary["cost_errors"]:
+        lines.append(f"- Cost errors: {len(summary['cost_errors'])}")
+    lines.append("")
     for debate in summary["debates"]:
         lines.append(f"## {debate['debate_id']}")
         lines.append("")
@@ -43,6 +48,13 @@ def write_summary(run_dir: Path, summary: dict) -> None:
         lines.append(f"- Con wins: {debate['con_wins']}")
         lines.append(f"- Ties: {debate['ties']}")
         lines.append(f"- Parse errors: {debate['parse_errors']}")
+        lines.append(f"- Debate latency: {debate['debate_latency_seconds']:.2f}s")
+        lines.append(f"- Judging latency: {debate['judging_latency_seconds']:.2f}s")
+        lines.append(f"- Debate cost: {_format_cost(debate['debate_cost_usd'])}")
+        lines.append(f"- Judging cost: {_format_cost(debate['judging_cost_usd'])}")
+        if debate["cost_errors"]:
+            lines.append("- Cost errors:")
+            lines.extend(f"  - {error}" for error in debate["cost_errors"])
         lines.append("")
     (run_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
 
@@ -61,3 +73,9 @@ def _json_default(value: object) -> object:
         return asdict(value)
     except TypeError:
         return str(value)
+
+
+def _format_cost(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"${value:.6f}"

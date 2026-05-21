@@ -1,5 +1,10 @@
 from tdec.config import ModelConfig, TopicConfig
-from tdec.debate_types import DebateTranscript
+from tdec.debate_types import (
+    DebateTranscript,
+    ModelCallMetrics,
+    ModelCallResult,
+    TokenUsage,
+)
 from tdec.judging import judge_debate, parse_json_response
 
 
@@ -16,8 +21,19 @@ def test_parse_json_response_extracts_json_from_text() -> None:
 
 
 class BadJsonClient:
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> str:
-        return '{"winner": "pro", "summary": "unterminated'
+    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
+        return ModelCallResult(
+            content='{"winner": "pro", "summary": "unterminated',
+            metrics=ModelCallMetrics(
+                model_id=model.id,
+                provider=model.provider,
+                model=model.model,
+                latency_seconds=0.5,
+                usage=TokenUsage(prompt_tokens=10, completion_tokens=4, total_tokens=14),
+                cost_usd=None,
+                cost_error="missing price",
+            ),
+        )
 
 
 def test_judge_debate_records_parse_error_instead_of_raising() -> None:
@@ -38,3 +54,5 @@ def test_judge_debate_records_parse_error_instead_of_raising() -> None:
 
     assert judgement.parsed["winner"] == "parse_error"
     assert "Unterminated string" in judgement.parsed["error"]
+    assert judgement.metrics is not None
+    assert judgement.metrics.cost_error == "missing price"

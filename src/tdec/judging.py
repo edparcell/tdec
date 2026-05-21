@@ -17,13 +17,14 @@ def judge_debate(
     transcript: DebateTranscript,
     judge_model: ModelConfig,
 ) -> Judgement:
-    raw = client.call(
+    result = client.call(
         judge_model,
         [
             {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
             {"role": "user", "content": judge_prompt(transcript)},
         ],
     )
+    raw = result.content
     try:
         parsed = parse_json_response(raw)
     except (json.JSONDecodeError, ValueError) as e:
@@ -38,6 +39,7 @@ def judge_debate(
         judge_model_id=judge_model.id,
         raw_text=raw,
         parsed=parsed,
+        metrics=result.metrics,
     )
 
 

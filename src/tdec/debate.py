@@ -34,15 +34,16 @@ def run_debate(
                 else response_prompt(topic, side, round_number, rounds)
             )
             histories[side].append({"role": "user", "content": prompt})
-            content = client.call(model, histories[side])
-            histories[side].append({"role": "assistant", "content": content})
+            result = client.call(model, histories[side])
+            histories[side].append({"role": "assistant", "content": result.content})
 
             turn = DebateTurn(
                 speaker_label=label,
                 speaker_model_id=model.id,
                 side=side,
                 turn_number=round_number,
-                content=content,
+                content=result.content,
+                metrics=result.metrics,
             )
             turns.append(turn)
             _share_turn(histories, turn)
@@ -74,4 +75,3 @@ def debate_pairings(models: list[ModelConfig]) -> list[tuple[ModelConfig, ModelC
             pairings.append((first, second))
             pairings.append((second, first))
     return pairings
-
