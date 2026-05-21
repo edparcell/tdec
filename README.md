@@ -39,6 +39,19 @@ uv run tdec run configs/openrouter-cheap.yaml
 - `debaters`: model IDs used as competitors.
 - `judges`: model IDs used as judges.
 - `rounds`: number of turns per side.
+- `judging`: retry settings for malformed judge JSON.
+
+Judge retries are conservative by default:
+
+```yaml
+judging:
+  repair_retries: 1
+  parse_retries: 1
+```
+
+TDEC first asks the judge to repair invalid JSON. If that fails, it can rerun
+the judgement prompt. All attempts are preserved in the judgement artifact with
+their timing and cost metrics.
 
 Models use LiteLLM provider/model IDs, for example:
 

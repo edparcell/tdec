@@ -41,11 +41,18 @@ class RunConfig:
 
 
 @dataclass(frozen=True)
+class JudgingConfig:
+    repair_retries: int = 1
+    parse_retries: int = 1
+
+
+@dataclass(frozen=True)
 class TournamentConfig:
     run: RunConfig
     topics: list[TopicConfig]
     debaters: list[ModelConfig]
     judges: list[ModelConfig]
+    judging: JudgingConfig
 
 
 def load_tournament_config(path: str | Path) -> TournamentConfig:
@@ -66,6 +73,7 @@ def load_tournament_config(path: str | Path) -> TournamentConfig:
         topics=[_topic_config(item) for item in _required_list(data, "topics")],
         debaters=[_model_config(item) for item in _required_list(data, "debaters")],
         judges=[_model_config(item) for item in _required_list(data, "judges")],
+        judging=_judging_config(data.get("judging", {})),
     )
 
 
@@ -94,6 +102,15 @@ def _topic_config(data: dict[str, Any]) -> TopicConfig:
         motion=str(data["motion"]),
         pro_position=str(data["pro_position"]),
         con_position=str(data["con_position"]),
+    )
+
+
+def _judging_config(data: Any) -> JudgingConfig:
+    if not isinstance(data, dict):
+        raise ValueError("Config key 'judging' must be a mapping when present")
+    return JudgingConfig(
+        repair_retries=int(data.get("repair_retries", 1)),
+        parse_retries=int(data.get("parse_retries", 1)),
     )
 
 

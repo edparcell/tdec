@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tdec.config import ModelConfig, RunConfig, TopicConfig, TournamentConfig
+from tdec.config import JudgingConfig, ModelConfig, RunConfig, TopicConfig, TournamentConfig
 from tdec.debate_types import ModelCallMetrics, ModelCallResult, TokenUsage
 from tdec.tournament import run_tournament
 
@@ -66,6 +66,7 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
             ModelConfig(id="judge_1", provider="test", model="j1"),
             ModelConfig(id="judge_2", provider="test", model="j2"),
         ],
+        judging=JudgingConfig(),
     )
 
     summary = run_tournament(config=config, client=StubClient())
@@ -95,6 +96,7 @@ def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
             ModelConfig(id="b", provider="test", model="b"),
         ],
         judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
+        judging=JudgingConfig(),
     )
 
     summary = run_tournament(config=config, client=UnknownCostClient())

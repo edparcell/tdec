@@ -107,3 +107,19 @@ Return exactly this compact JSON shape:
 Scores are 0-100 for side totals and 0-10 for rubric cells. Audience votes must
 sum to 100. Use "tie" only when genuinely inseparable.
 """
+
+
+def judge_repair_prompt(bad_output: str, error: str) -> str:
+    return f"""\
+Your previous judgement was not valid JSON.
+
+JSON parse error:
+{error}
+
+Previous output:
+{bad_output}
+
+Return only corrected compact JSON in the same schema requested before. Do not
+add Markdown or commentary. Do not change the judgement unless required to make
+the JSON valid.
+"""

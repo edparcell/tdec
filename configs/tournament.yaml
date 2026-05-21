@@ -3,6 +3,10 @@ run:
   rounds: 3
   output_dir: runs
 
+judging:
+  repair_retries: 1
+  parse_retries: 1
+
 topics:
   - id: trump_administration_policies
     motion: >-
@@ -38,4 +42,3 @@ judges:
     api_base: http://localhost:11434
     temperature: 0.2
     max_tokens: 1200
-

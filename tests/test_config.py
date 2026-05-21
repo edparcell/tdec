@@ -15,6 +15,8 @@ def test_load_tournament_config() -> None:
         "local_tinyllama_b",
     ]
     assert config.judges[0].id == "local_tinyllama_judge"
+    assert config.judging.repair_retries == 1
+    assert config.judging.parse_retries == 1
 
 
 def test_load_tournament_config_resolves_api_key_env(tmp_path: Path, monkeypatch) -> None:
@@ -26,6 +28,9 @@ run:
   name: test
   rounds: 1
   output_dir: runs
+judging:
+  repair_retries: 2
+  parse_retries: 3
 topics:
   - id: topic
     motion: Motion
@@ -49,6 +54,8 @@ judges:
 
     assert config.debaters[0].api_key == "test-key"
     assert config.judges[0].api_key == "test-key"
+    assert config.judging.repair_retries == 2
+    assert config.judging.parse_retries == 3
 
 
 def test_load_tournament_config_raises_for_missing_api_key_env(

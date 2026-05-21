@@ -35,6 +35,15 @@ class ModelCallResult:
 
 
 @dataclass(frozen=True)
+class JudgeAttempt:
+    kind: str
+    raw_text: str
+    parsed: dict[str, Any] | None
+    error: str | None
+    metrics: ModelCallMetrics
+
+
+@dataclass(frozen=True)
 class DebateTurn:
     speaker_label: str
     speaker_model_id: str
@@ -71,6 +80,7 @@ class Judgement:
     raw_text: str
     parsed: dict[str, Any]
     metrics: ModelCallMetrics | None = None
+    attempts: list[JudgeAttempt] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

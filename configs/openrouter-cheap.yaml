@@ -3,6 +3,10 @@ run:
   rounds: 3
   output_dir: runs
 
+judging:
+  repair_retries: 1
+  parse_retries: 1
+
 topics:
   - id: trump_administration_policies
     motion: >-

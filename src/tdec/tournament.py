@@ -46,6 +46,7 @@ def run_tournament(
                     client=client,
                     transcript=transcript,
                     judge_model=judge_model,
+                    judging_config=config.judging,
                 )
                 judgements.append(judgement)
                 write_judgement(run_dir, judgement)

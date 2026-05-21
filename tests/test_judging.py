@@ -1,4 +1,4 @@
-from tdec.config import ModelConfig, TopicConfig
+from tdec.config import JudgingConfig, ModelConfig, TopicConfig
 from tdec.debate_types import (
     DebateTranscript,
     ModelCallMetrics,
@@ -36,6 +36,34 @@ class BadJsonClient:
         )
 
 
+class RepairJsonClient:
+    def __init__(self) -> None:
+        self.calls: list[list[dict[str, str]]] = []
+
+    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
+        self.calls.append(messages)
+        content = (
+            '{"winner": "con", "winner_label": "B", "confidence": 0.6}'
+            if len(self.calls) == 2
+            else '{"winner": "con", "summary": "unterminated'
+        )
+        return _result(model, content)
+
+
+def _result(model: ModelConfig, content: str) -> ModelCallResult:
+    return ModelCallResult(
+        content=content,
+        metrics=ModelCallMetrics(
+            model_id=model.id,
+            provider=model.provider,
+            model=model.model,
+            latency_seconds=0.5,
+            usage=TokenUsage(prompt_tokens=10, completion_tokens=4, total_tokens=14),
+            cost_usd=0.001,
+        ),
+    )
+
+
 def test_judge_debate_records_parse_error_instead_of_raising() -> None:
     transcript = DebateTranscript(
         id="debate",
@@ -56,3 +84,29 @@ def test_judge_debate_records_parse_error_instead_of_raising() -> None:
     assert "Unterminated string" in judgement.parsed["error"]
     assert judgement.metrics is not None
     assert judgement.metrics.cost_error == "missing price"
+    assert judgement.attempts is not None
+    assert [attempt.kind for attempt in judgement.attempts] == ["initial", "repair", "retry"]
+
+
+def test_judge_debate_repairs_bad_json() -> None:
+    transcript = DebateTranscript(
+        id="debate",
+        topic=TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con"),
+        pro_model=ModelConfig(id="pro", provider="test", model="pro"),
+        con_model=ModelConfig(id="con", provider="test", model="con"),
+        rounds=1,
+        turns=[],
+    )
+    client = RepairJsonClient()
+
+    judgement = judge_debate(
+        client=client,
+        transcript=transcript,
+        judge_model=ModelConfig(id="judge", provider="test", model="judge"),
+        judging_config=JudgingConfig(repair_retries=1, parse_retries=0),
+    )
+
+    assert judgement.parsed["winner"] == "con"
+    assert judgement.attempts is not None
+    assert [attempt.kind for attempt in judgement.attempts] == ["initial", "repair"]
+    assert "not valid JSON" in client.calls[1][-1]["content"]
