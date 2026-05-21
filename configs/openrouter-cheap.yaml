@@ -1,0 +1,41 @@
+run:
+  name: openrouter-cheap-smoke
+  rounds: 3
+  output_dir: runs
+
+topics:
+  - id: trump_administration_policies
+    motion: >-
+      The policies of the Trump administrations, first and second, were broadly
+      justified on their merits.
+    pro_position: >-
+      Argue that the policies of the Trump administrations were justified. Build
+      the widest serious case you can across economics, sovereignty, law,
+      institutions, moral reasoning, foreign policy, execution, and tradeoffs.
+    con_position: >-
+      Argue that the policies of the Trump administrations were not justified.
+      Build the widest serious case you can across economics, sovereignty, law,
+      institutions, moral reasoning, foreign policy, execution, and tradeoffs.
+
+debaters:
+  - id: granite_4_1_8b
+    provider: openrouter
+    model: ibm-granite/granite-4.1-8b
+    api_key_env: OPENROUTER_API_KEY
+    temperature: 0.7
+    max_tokens: 1200
+  - id: gemini_3_1_flash_lite
+    provider: openrouter
+    model: google/gemini-3.1-flash-lite
+    api_key_env: OPENROUTER_API_KEY
+    temperature: 0.7
+    max_tokens: 1200
+
+judges:
+  - id: ring_2_6_1t
+    provider: openrouter
+    model: inclusionai/ring-2.6-1t
+    api_key_env: OPENROUTER_API_KEY
+    temperature: 0.2
+    max_tokens: 1600
+

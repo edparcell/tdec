@@ -19,6 +19,18 @@ uv run tdec run configs/tournament.yaml
 
 Generated runs are written under `runs/<timestamp>/`.
 
+For OpenRouter, put your key in `.env`:
+
+```text
+OPENROUTER_API_KEY=sk-or-...
+```
+
+Then run the cheap OpenRouter smoke tournament:
+
+```powershell
+uv run tdec run configs/openrouter-cheap.yaml
+```
+
 ## Configuration
 
 `configs/tournament.yaml` contains the default shape:
@@ -44,4 +56,3 @@ Each run writes:
 - `judgements/*.json` - each judge result for each debate.
 - `summary.json` - aggregate machine-readable summary.
 - `summary.md` - compact human-readable summary.
-

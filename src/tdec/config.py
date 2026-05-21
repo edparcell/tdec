@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -69,12 +70,19 @@ def load_tournament_config(path: str | Path) -> TournamentConfig:
 
 
 def _model_config(data: dict[str, Any]) -> ModelConfig:
+    api_key = data.get("api_key")
+    api_key_env = data.get("api_key_env")
+    if api_key_env:
+        api_key = os.environ.get(str(api_key_env))
+        if not api_key:
+            raise ValueError(f"Required API key environment variable is not set: {api_key_env}")
+
     return ModelConfig(
         id=str(data["id"]),
         provider=str(data["provider"]),
         model=str(data["model"]),
         api_base=data.get("api_base"),
-        api_key=data.get("api_key"),
+        api_key=api_key,
         temperature=float(data.get("temperature", 0.2)),
         max_tokens=int(data.get("max_tokens", 4096)),
     )
@@ -101,4 +109,3 @@ def _required_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ValueError(f"Config key {key!r} must be a list")
     return value
-

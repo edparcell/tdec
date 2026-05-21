@@ -7,6 +7,7 @@ from pathlib import Path
 import click
 
 from tdec.config import load_tournament_config
+from tdec.env import load_env_file
 from tdec.models import LiteLLMClient
 from tdec.tournament import run_tournament
 
@@ -26,6 +27,8 @@ def main() -> None:
 )
 def run(config_path: Path, output_dir: Path | None) -> None:
     """Run a debate tournament from a YAML config."""
+    load_env_file(config_path.parent.parent / ".env")
+    load_env_file(".env")
     config = load_tournament_config(config_path)
     result = run_tournament(
         config=config,
@@ -37,4 +40,3 @@ def run(config_path: Path, output_dir: Path | None) -> None:
 
 if __name__ == "__main__":
     main()
-
