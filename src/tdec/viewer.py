@@ -53,6 +53,19 @@ def _extract_topic_motions(run_dir: Path) -> dict:
     return result
 
 
+def _compute_word_counts(run_dir: Path) -> dict:
+    debate_words = 0
+    judgement_words = 0
+    for f in (run_dir / "debates").glob("*.json"):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        for turn in data.get("turns", []):
+            debate_words += len(turn.get("content", "").split())
+    for f in (run_dir / "judgements").glob("*.json"):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        judgement_words += len(data.get("raw_text", "").split())
+    return {"debate_words": debate_words, "judgement_words": judgement_words}
+
+
 def _jinja_env() -> jinja2.Environment:
     return jinja2.Environment(
         loader=jinja2.FileSystemLoader(str(_TEMPLATES_DIR)),
@@ -74,6 +87,7 @@ def serve(run_dir: Path, port: int | None = None) -> None:
     judgements_dir = run_dir / "judgements"
     css_text = _STATIC_DIR.joinpath("viewer.css").read_text(encoding="utf-8")
     topic_motions = _extract_topic_motions(run_dir)
+    word_counts = _compute_word_counts(run_dir)
     env = _jinja_env()
     template = env.get_template("viewer.html")
 
@@ -87,6 +101,7 @@ def serve(run_dir: Path, port: int | None = None) -> None:
             all_debates="null",
             all_judgements="null",
             topic_motions=json.dumps(topic_motions),
+            word_counts=json.dumps(word_counts),
             inline_css=None,
         )
 
@@ -130,12 +145,14 @@ def export_html(run_dir: Path, output: Path) -> None:
     env = _jinja_env()
     template = env.get_template("viewer.html")
     topic_motions = _extract_topic_motions(run_dir)
+    word_counts = _compute_word_counts(run_dir)
     html = template.render(
         run_name=run_dir.name,
         summary=json.dumps(summary),
         all_debates=json.dumps(debates),
         all_judgements=json.dumps(judgements),
         topic_motions=json.dumps(topic_motions),
+        word_counts=json.dumps(word_counts),
         inline_css=css,
     )
     output.write_text(html, encoding="utf-8")

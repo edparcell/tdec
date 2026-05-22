@@ -36,6 +36,7 @@ const SUMMARY = {{ summary|safe }};
 const ALL_DEBATES = {{ all_debates|safe }};
 const ALL_JUDGEMENTS = {{ all_judgements|safe }};
 const TOPIC_MOTIONS = {{ topic_motions|safe }};
+const WORD_COUNTS = {{ word_counts|safe }};
 
 let activeTopic = null;
 
@@ -52,6 +53,8 @@ function renderStats() {
     <span class="stat"><strong>${formatTime(latency)}</strong> total latency</span>
     <span class="stat"><strong>${debateCount}</strong> debates</span>
     <span class="stat"><strong>${modelCount}</strong> models</span>
+    <span class="stat"><strong>${formatCount(WORD_COUNTS.debate_words)}</strong> debate words</span>
+    <span class="stat"><strong>${formatCount(WORD_COUNTS.judgement_words)}</strong> judgement words</span>
   `;
   bar.innerHTML = html;
 }
@@ -62,6 +65,13 @@ function formatTime(s) {
   const sec = Math.round(s % 60);
   return `${m}m${sec}s`;
 }
+
+function formatCount(n) {
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+  return String(n);
+}
+
+function wordCount(text) { return text ? text.split(/\s+/).filter(Boolean).length : 0; }
 
 // ── Motion bar ──
 function renderMotionBar() {
@@ -263,7 +273,9 @@ async function loadDetail(debateId) {
 
 function renderDetail(debate, judgements, container) {
   let html = '<div class="detail-header">';
-  html += `<div class="matchup"><span style="color:var(--pro-color)">PRO: ${debate.pro_model.id}</span> vs <span style="color:var(--con-color)">CON: ${debate.con_model.id}</span> &middot; ${debate.rounds} rounds</div>`;
+  const debateWords = debate.turns.reduce((sum, t) => sum + wordCount(t.content), 0);
+  const judgeWords = judgements.reduce((sum, j) => sum + wordCount(j.raw_text), 0);
+  html += `<div class="matchup"><span style="color:var(--pro-color)">PRO: ${debate.pro_model.id}</span> vs <span style="color:var(--con-color)">CON: ${debate.con_model.id}</span> &middot; ${debate.rounds} rounds &middot; ${formatCount(debateWords)} debate words &middot; ${formatCount(judgeWords)} judge words</div>`;
 
   if (debate.topic.pro_position) {
     html += `<details class="position-details"><summary>Pro position</summary><div class="position-text">${escapeHtml(debate.topic.pro_position)}</div></details>`;
