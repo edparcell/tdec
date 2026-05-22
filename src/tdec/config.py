@@ -38,6 +38,8 @@ class RunConfig:
     name: str
     rounds: int
     output_dir: Path
+    include_self_debates: bool = True
+    workers: int = 1
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,8 @@ def load_tournament_config(path: str | Path) -> TournamentConfig:
         name=str(run_data.get("name", config_path.stem)),
         rounds=int(run_data.get("rounds", 3)),
         output_dir=Path(run_data.get("output_dir", "runs")),
+        include_self_debates=_bool_value(run_data.get("include_self_debates", True)),
+        workers=_positive_int(run_data.get("workers", 1), "run.workers"),
     )
 
     return TournamentConfig(
@@ -127,3 +131,22 @@ def _required_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise ValueError(f"Config key {key!r} must be a list")
     return value
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1", "on"}:
+            return True
+        if normalized in {"false", "no", "0", "off"}:
+            return False
+    raise ValueError(f"Expected boolean value, got {value!r}")
+
+
+def _positive_int(value: Any, name: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return parsed

@@ -9,6 +9,8 @@ def test_load_tournament_config() -> None:
     config = load_tournament_config(Path("configs/tournament.yaml"))
 
     assert config.run.rounds == 3
+    assert config.run.include_self_debates is True
+    assert config.run.workers == 1
     assert config.topics[0].id == "trump_administration_policies"
     assert [model.id for model in config.debaters] == [
         "local_tinyllama_a",
@@ -28,6 +30,8 @@ run:
   name: test
   rounds: 1
   output_dir: runs
+  include_self_debates: false
+  workers: 3
 judging:
   repair_retries: 2
   parse_retries: 3
@@ -54,6 +58,8 @@ judges:
 
     assert config.debaters[0].api_key == "test-key"
     assert config.judges[0].api_key == "test-key"
+    assert config.run.include_self_debates is False
+    assert config.run.workers == 3
     assert config.judging.repair_retries == 2
     assert config.judging.parse_retries == 3
 

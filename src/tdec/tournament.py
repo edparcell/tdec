@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import traceback
@@ -15,7 +17,7 @@ from tdec.artifacts import (
     write_judgement,
     write_summary,
 )
-from tdec.config import TournamentConfig
+from tdec.config import ModelConfig, TournamentConfig
 from tdec.debate import debate_pairings, run_debate
 from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 from tdec.judging import judge_debate
@@ -30,73 +32,160 @@ class TournamentResult(TypedDict):
     debates: list[dict]
 
 
+@dataclass(frozen=True)
+class DebateJob:
+    index: int
+    topic_index: int
+    topic_id: str
+    debate_id: str
+    pro_model_id: str
+    con_model_id: str
+
+
+@dataclass(frozen=True)
+class JudgementJob:
+    index: int
+    topic_id: str
+    debate_id: str
+    pro_model_id: str
+    con_model_id: str
+    judge_model_id: str
+
+
 def run_tournament(
     *,
     config: TournamentConfig,
     client: ChatModel,
     output_dir: Path | None = None,
     artifact_verbosity: ArtifactVerbosity = "compact",
+    workers: int | None = None,
 ) -> TournamentResult:
     base_output_dir = output_dir or config.run.output_dir
     run_dir = make_run_dir(base_output_dir, config.run.name)
-    debates: list[DebateTranscript] = []
-    judgements: list[Judgement] = []
     errors: list[TournamentError] = []
+    worker_count = config.run.workers if workers is None else workers
+    if worker_count < 1:
+        raise ValueError("workers must be at least 1")
 
-    for topic in config.topics:
-        for pro_model, con_model in debate_pairings(config.debaters):
-            debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
+    debate_results: list[tuple[int, DebateTranscript]] = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(
+                run_debate,
+                client=client,
+                topic=config.topics[job.topic_index],
+                pro_model=_model_by_id(config.debaters, job.pro_model_id),
+                con_model=_model_by_id(config.debaters, job.con_model_id),
+                rounds=config.run.rounds,
+            ): job
+            for job in _debate_jobs(config)
+        }
+        for future in as_completed(futures):
+            job = futures[future]
             try:
-                transcript = run_debate(
-                    client=client,
-                    topic=topic,
-                    pro_model=pro_model,
-                    con_model=con_model,
-                    rounds=config.run.rounds,
-                )
+                transcript = future.result()
             except ModelCallError as e:
                 error = _tournament_error(
                     stage="debate",
-                    topic_id=topic.id,
-                    debate_id=debate_id,
-                    pro_model_id=pro_model.id,
-                    con_model_id=con_model.id,
+                    topic_id=job.topic_id,
+                    debate_id=job.debate_id,
+                    pro_model_id=job.pro_model_id,
+                    con_model_id=job.con_model_id,
                     judge_model_id=None,
                     exc=e,
                 )
                 errors.append(error)
                 write_error(run_dir, error, len(errors))
                 continue
-            debates.append(transcript)
+            debate_results.append((job.index, transcript))
             write_debate(run_dir, transcript, artifact_verbosity=artifact_verbosity)
 
-            for judge_model in config.judges:
-                try:
-                    judgement = judge_debate(
-                        client=client,
-                        transcript=transcript,
-                        judge_model=judge_model,
-                        judging_config=config.judging,
-                    )
-                except ModelCallError as e:
-                    error = _tournament_error(
-                        stage="judgement",
-                        topic_id=topic.id,
-                        debate_id=transcript.id,
-                        pro_model_id=pro_model.id,
-                        con_model_id=con_model.id,
-                        judge_model_id=judge_model.id,
-                        exc=e,
-                    )
-                    errors.append(error)
-                    write_error(run_dir, error, len(errors))
-                    continue
-                judgements.append(judgement)
-                write_judgement(run_dir, judgement, artifact_verbosity=artifact_verbosity)
+    debates = [transcript for _, transcript in sorted(debate_results, key=lambda item: item[0])]
+
+    judgement_results: list[tuple[int, Judgement]] = []
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(
+                judge_debate,
+                client=client,
+                transcript=transcript,
+                judge_model=_model_by_id(config.judges, job.judge_model_id),
+                judging_config=config.judging,
+            ): job
+            for job, transcript in _judgement_jobs(debates, config)
+        }
+        for future in as_completed(futures):
+            job = futures[future]
+            try:
+                judgement = future.result()
+            except ModelCallError as e:
+                error = _tournament_error(
+                    stage="judgement",
+                    topic_id=job.topic_id,
+                    debate_id=job.debate_id,
+                    pro_model_id=job.pro_model_id,
+                    con_model_id=job.con_model_id,
+                    judge_model_id=job.judge_model_id,
+                    exc=e,
+                )
+                errors.append(error)
+                write_error(run_dir, error, len(errors))
+                continue
+            judgement_results.append((job.index, judgement))
+            write_judgement(run_dir, judgement, artifact_verbosity=artifact_verbosity)
+
+    judgements = [
+        judgement for _, judgement in sorted(judgement_results, key=lambda item: item[0])
+    ]
 
     summary = summarize(run_dir, debates, judgements, errors)
     write_summary(run_dir, summary)
     return summary
+
+
+def _debate_jobs(config: TournamentConfig) -> list[DebateJob]:
+    jobs = []
+    for topic_index, topic in enumerate(config.topics):
+        for pro_model, con_model in debate_pairings(
+            config.debaters,
+            include_self_debates=config.run.include_self_debates,
+        ):
+            jobs.append(
+                DebateJob(
+                    index=len(jobs),
+                    topic_index=topic_index,
+                    topic_id=topic.id,
+                    debate_id=f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con",
+                    pro_model_id=pro_model.id,
+                    con_model_id=con_model.id,
+                )
+            )
+    return jobs
+
+
+def _judgement_jobs(
+    debates: list[DebateTranscript],
+    config: TournamentConfig,
+) -> list[tuple[JudgementJob, DebateTranscript]]:
+    jobs = []
+    for debate in debates:
+        for judge_model in config.judges:
+            jobs.append((
+                JudgementJob(
+                    index=len(jobs),
+                    topic_id=debate.topic.id,
+                    debate_id=debate.id,
+                    pro_model_id=debate.pro_model.id,
+                    con_model_id=debate.con_model.id,
+                    judge_model_id=judge_model.id,
+                ),
+                debate,
+            ))
+    return jobs
+
+
+def _model_by_id(models: list[ModelConfig], model_id: str) -> ModelConfig:
+    return next(model for model in models if model.id == model_id)
 
 
 def summarize(
@@ -298,6 +387,8 @@ def _elo_ratings(debates: list[DebateTranscript], judgements: list[Judgement]) -
         debate = debate_by_id[judgement.debate_id]
         pro_id = debate.pro_model.id
         con_id = debate.con_model.id
+        if pro_id == con_id:
+            continue
         ratings.setdefault(pro_id, STARTING_ELO)
         ratings.setdefault(con_id, STARTING_ELO)
         score_pro = _pro_score_for_winner(winner)

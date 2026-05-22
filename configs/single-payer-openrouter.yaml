@@ -2,6 +2,8 @@ run:
   name: single-payer-openrouter
   rounds: 3
   output_dir: runs
+  include_self_debates: true
+  workers: 10
 
 judging:
   repair_retries: 1
@@ -57,9 +59,9 @@ debaters:
     max_tokens: 10000
 
 judges:
-  - id: claude_sonnet_4_6
+  - id: claude_haiku_4_5
     provider: openrouter
-    model: anthropic/claude-sonnet-4.6
+    model: anthropic/claude-haiku-4.5
     api_key_env: OPENROUTER_API_KEY
     temperature: null
     max_tokens: 10000

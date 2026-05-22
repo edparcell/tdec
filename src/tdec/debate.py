@@ -68,9 +68,15 @@ def _share_turn(histories: dict[Side, list[dict[str, str]]], turn: DebateTurn) -
             histories[side].append({"role": "user", "content": message})
 
 
-def debate_pairings(models: list[ModelConfig]) -> list[tuple[ModelConfig, ModelConfig]]:
+def debate_pairings(
+    models: list[ModelConfig],
+    *,
+    include_self_debates: bool = True,
+) -> list[tuple[ModelConfig, ModelConfig]]:
     pairings = []
     for index, first in enumerate(models):
+        if include_self_debates:
+            pairings.append((first, first))
         for second in models[index + 1 :]:
             pairings.append((first, second))
             pairings.append((second, first))

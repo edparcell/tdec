@@ -18,7 +18,7 @@ class StubClient:
         return _call_result(model, f"{model.id} response {len(self.calls)}")
 
 
-def test_debate_pairings_runs_each_pair_both_ways() -> None:
+def test_debate_pairings_includes_self_debates_by_default() -> None:
     models = [
         ModelConfig(id="a", provider="test", model="a"),
         ModelConfig(id="b", provider="test", model="b"),
@@ -26,6 +26,29 @@ def test_debate_pairings_runs_each_pair_both_ways() -> None:
     ]
 
     assert [(pro.id, con.id) for pro, con in debate_pairings(models)] == [
+        ("a", "a"),
+        ("a", "b"),
+        ("b", "a"),
+        ("a", "c"),
+        ("c", "a"),
+        ("b", "b"),
+        ("b", "c"),
+        ("c", "b"),
+        ("c", "c"),
+    ]
+
+
+def test_debate_pairings_can_skip_self_debates() -> None:
+    models = [
+        ModelConfig(id="a", provider="test", model="a"),
+        ModelConfig(id="b", provider="test", model="b"),
+        ModelConfig(id="c", provider="test", model="c"),
+    ]
+
+    assert [
+        (pro.id, con.id)
+        for pro, con in debate_pairings(models, include_self_debates=False)
+    ] == [
         ("a", "b"),
         ("b", "a"),
         ("a", "c"),

@@ -6,7 +6,8 @@ between LLMs and scoring them with independent judge LLMs.
 The first version uses LiteLLM directly. The core workflow is:
 
 1. Load debater and judge models from YAML.
-2. Run each debater pair both ways round: A pro/B con and B pro/A con.
+2. Run each debater pair both ways round: A pro/B con and B pro/A con,
+   including same-model self-debates by default.
 3. Run judge models over each complete transcript.
 4. Save machine-readable debate, judgement, and summary artifacts.
 
@@ -46,6 +47,8 @@ uv run tdec run configs/openrouter-cheap.yaml --artifact-verbosity full
 - `debaters`: model IDs used as competitors.
 - `judges`: model IDs used as judges.
 - `rounds`: number of turns per side.
+- `include_self_debates`: whether to run each model against itself. Defaults to `true`.
+- `workers`: concurrent debate and judgement jobs. Defaults to `1`.
 - `judging`: retry settings for malformed judge JSON.
 
 Judge retries are conservative by default:
@@ -67,6 +70,15 @@ provider: ollama
 model: tinyllama
 api_base: http://localhost:11434
 ```
+
+You can override worker count from the CLI:
+
+```powershell
+uv run tdec run configs/openrouter-cheap.yaml --workers 4
+```
+
+Higher worker counts make the tournament faster, but increase concurrent
+provider requests and may hit rate limits sooner.
 
 ## Outputs
 

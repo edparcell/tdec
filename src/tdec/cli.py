@@ -32,7 +32,18 @@ def main() -> None:
     show_default=True,
     help="Use compact artifacts by default, or full raw model response metadata.",
 )
-def run(config_path: Path, output_dir: Path | None, artifact_verbosity: str) -> None:
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Override run.workers for concurrent debate and judgement jobs.",
+)
+def run(
+    config_path: Path,
+    output_dir: Path | None,
+    artifact_verbosity: str,
+    workers: int | None,
+) -> None:
     """Run a debate tournament from a YAML config."""
     load_env_file(config_path.parent.parent / ".env")
     load_env_file(".env")
@@ -42,6 +53,7 @@ def run(config_path: Path, output_dir: Path | None, artifact_verbosity: str) -> 
         client=LiteLLMClient(),
         output_dir=output_dir,
         artifact_verbosity=artifact_verbosity,
+        workers=workers,
     )
     click.echo(f"Wrote run to {result['run_dir']}")
 
