@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import click
 
-from tdec.config import load_tournament_config
+from tdec.config import load_judge_config, load_tournament_config
 from tdec.env import load_env_file
 from tdec.models import LiteLLMClient
-from tdec.tournament import run_tournament
+from tdec.tournament import run_posthoc_judges, run_tournament
 from tdec.viewer import export_html, serve as serve_viewer
 
 
@@ -39,16 +40,25 @@ def main() -> None:
     default=None,
     help="Override run.workers for concurrent debate and judgement jobs.",
 )
+@click.option(
+    "--no-reuse-openings",
+    is_flag=True,
+    default=False,
+    help="Disable pro opening reuse across debates.",
+)
 def run(
     config_path: Path,
     output_dir: Path | None,
     artifact_verbosity: str,
     workers: int | None,
+    no_reuse_openings: bool,
 ) -> None:
     """Run a debate tournament from a YAML config."""
     load_env_file(config_path.parent.parent / ".env")
     load_env_file(".env")
     config = load_tournament_config(config_path)
+    if no_reuse_openings:
+        config = replace(config, run=replace(config.run, reuse_openings=False))
     result = run_tournament(
         config=config,
         client=LiteLLMClient(),
@@ -68,6 +78,44 @@ def view(run_dir: Path, port: int | None) -> None:
     if not summary_path.exists():
         raise click.ClickException(f"No summary.json found in {run_dir}")
     serve_viewer(run_dir, port=port)
+
+
+@main.command()
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("judge_config_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--workers",
+    type=click.IntRange(min=1),
+    default=1,
+    show_default=True,
+    help="Concurrent judging jobs.",
+)
+@click.option(
+    "--artifact-verbosity",
+    type=click.Choice(["compact", "full"]),
+    default="compact",
+    show_default=True,
+)
+def judge(
+    run_dir: Path,
+    judge_config_path: Path,
+    workers: int,
+    artifact_verbosity: str,
+) -> None:
+    """Add judges to an existing tournament run."""
+    if not (run_dir / "summary.json").exists():
+        raise click.ClickException(f"No summary.json found in {run_dir}")
+    load_env_file(judge_config_path.parent.parent / ".env")
+    load_env_file(".env")
+    config = load_judge_config(judge_config_path)
+    result = run_posthoc_judges(
+        run_dir=run_dir,
+        judge_config=config,
+        client=LiteLLMClient(),
+        artifact_verbosity=artifact_verbosity,
+        workers=workers,
+    )
+    click.echo(f"Updated summary at {result['run_dir']}")
 
 
 @main.command("export")

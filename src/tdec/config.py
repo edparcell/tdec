@@ -40,6 +40,8 @@ class RunConfig:
     output_dir: Path
     include_self_debates: bool = True
     workers: int = 1
+    reuse_openings: bool = True
+    parallel_rounds: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,23 @@ class TournamentConfig:
     judging: JudgingConfig
 
 
+@dataclass(frozen=True)
+class JudgeRunConfig:
+    judges: list[ModelConfig]
+    judging: JudgingConfig
+
+
+def load_judge_config(path: str | Path) -> JudgeRunConfig:
+    config_path = Path(path)
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Config {config_path} must contain a YAML object")
+    return JudgeRunConfig(
+        judges=[_model_config(item) for item in _required_list(data, "judges")],
+        judging=_judging_config(data.get("judging", {})),
+    )
+
+
 def load_tournament_config(path: str | Path) -> TournamentConfig:
     config_path = Path(path)
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -70,6 +89,8 @@ def load_tournament_config(path: str | Path) -> TournamentConfig:
         output_dir=Path(run_data.get("output_dir", "runs")),
         include_self_debates=_bool_value(run_data.get("include_self_debates", True)),
         workers=_positive_int(run_data.get("workers", 1), "run.workers"),
+        reuse_openings=_bool_value(run_data.get("reuse_openings", True)),
+        parallel_rounds=_bool_value(run_data.get("parallel_rounds", False)),
     )
 
     return TournamentConfig(

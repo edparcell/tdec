@@ -11,6 +11,37 @@ from typing import Any, Literal
 
 from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 
+# ── Loading artifacts from disk ──
+
+
+def load_debate_transcripts(run_dir: Path) -> list[DebateTranscript]:
+    debates_dir = run_dir / "debates"
+    results = []
+    for f in sorted(debates_dir.glob("*.json")):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        results.append(DebateTranscript.from_dict(data))
+    return results
+
+
+def load_all_judgements(run_dir: Path) -> list[Judgement]:
+    judgements_dir = run_dir / "judgements"
+    results = []
+    for f in sorted(judgements_dir.glob("*.json")):
+        data = json.loads(f.read_text(encoding="utf-8"))
+        results.append(Judgement.from_dict(data))
+    return results
+
+
+def existing_judgement_keys(run_dir: Path) -> set[tuple[str, str]]:
+    judgements_dir = run_dir / "judgements"
+    keys: set[tuple[str, str]] = set()
+    for f in judgements_dir.glob("*.json"):
+        stem = f.stem
+        parts = stem.rsplit("__", 1)
+        if len(parts) == 2:
+            keys.add((parts[0], parts[1]))
+    return keys
+
 ArtifactVerbosity = Literal["compact", "full"]
 
 

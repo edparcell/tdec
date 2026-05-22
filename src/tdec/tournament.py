@@ -9,16 +9,21 @@ import re
 import traceback
 from typing import TypedDict
 
+import click
+
 from tdec.artifacts import (
     ArtifactVerbosity,
+    existing_judgement_keys,
+    load_all_judgements,
+    load_debate_transcripts,
     make_run_dir,
     write_debate,
     write_error,
     write_judgement,
     write_summary,
 )
-from tdec.config import ModelConfig, TournamentConfig
-from tdec.debate import debate_pairings, run_debate
+from tdec.config import JudgeRunConfig, ModelConfig, TournamentConfig
+from tdec.debate import OpeningCache, debate_pairings, run_debate, run_parallel_debate
 from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 from tdec.judging import judge_debate
 from tdec.models import ChatModel, ModelCallError
@@ -67,16 +72,20 @@ def run_tournament(
     if worker_count < 1:
         raise ValueError("workers must be at least 1")
 
+    opening_cache = OpeningCache() if config.run.reuse_openings else None
+    debate_fn = run_parallel_debate if config.run.parallel_rounds else run_debate
+
     debate_results: list[tuple[int, DebateTranscript]] = []
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
             executor.submit(
-                run_debate,
+                debate_fn,
                 client=client,
                 topic=config.topics[job.topic_index],
                 pro_model=_model_by_id(config.debaters, job.pro_model_id),
                 con_model=_model_by_id(config.debaters, job.con_model_id),
                 rounds=config.run.rounds,
+                opening_cache=opening_cache,
             ): job
             for job in _debate_jobs(config)
         }
@@ -139,6 +148,77 @@ def run_tournament(
     ]
 
     summary = summarize(run_dir, debates, judgements, errors)
+    write_summary(run_dir, summary)
+    return summary
+
+
+def run_posthoc_judges(
+    *,
+    run_dir: Path,
+    judge_config: JudgeRunConfig,
+    client: ChatModel,
+    artifact_verbosity: ArtifactVerbosity = "compact",
+    workers: int = 1,
+) -> TournamentResult:
+    debates = load_debate_transcripts(run_dir)
+    existing = existing_judgement_keys(run_dir)
+
+    jobs: list[tuple[JudgementJob, DebateTranscript]] = []
+    for debate in debates:
+        for judge_model in judge_config.judges:
+            if (debate.id, judge_model.id) in existing:
+                continue
+            jobs.append((
+                JudgementJob(
+                    index=len(jobs),
+                    topic_id=debate.topic.id,
+                    debate_id=debate.id,
+                    pro_model_id=debate.pro_model.id,
+                    con_model_id=debate.con_model.id,
+                    judge_model_id=judge_model.id,
+                ),
+                debate,
+            ))
+
+    if not jobs:
+        click.echo("All judge/debate combinations already exist, nothing to do.")
+    else:
+        new_count = 0
+        errors: list[TournamentError] = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    judge_debate,
+                    client=client,
+                    transcript=transcript,
+                    judge_model=_model_by_id(judge_config.judges, job.judge_model_id),
+                    judging_config=judge_config.judging,
+                ): job
+                for job, transcript in jobs
+            }
+            for future in as_completed(futures):
+                job = futures[future]
+                try:
+                    judgement = future.result()
+                except ModelCallError as e:
+                    error = _tournament_error(
+                        stage="judgement",
+                        topic_id=job.topic_id,
+                        debate_id=job.debate_id,
+                        pro_model_id=job.pro_model_id,
+                        con_model_id=job.con_model_id,
+                        judge_model_id=job.judge_model_id,
+                        exc=e,
+                    )
+                    errors.append(error)
+                    write_error(run_dir, error, len(errors))
+                    continue
+                write_judgement(run_dir, judgement, artifact_verbosity=artifact_verbosity)
+                new_count += 1
+        click.echo(f"Wrote {new_count} new judgements.")
+
+    all_judgements = load_all_judgements(run_dir)
+    summary = summarize(run_dir, debates, all_judgements)
     write_summary(run_dir, summary)
     return summary
 

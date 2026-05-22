@@ -2,10 +2,47 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 from tdec.config import ModelConfig, TopicConfig
-from tdec.debate_types import DebateTranscript, DebateTurn, Side
+from tdec.debate_types import DebateTranscript, DebateTurn, ModelCallResult, Side
 from tdec.models import ChatModel
-from tdec.prompts import DEBATER_SYSTEM_PROMPT, opening_prompt, response_prompt
+from tdec.prompts import (
+    DEBATER_SYSTEM_PROMPT,
+    opening_prompt,
+    parallel_opening_prompt,
+    parallel_response_prompt,
+    response_prompt,
+)
+
+
+class OpeningCache:
+    """Thread-safe cache for reusing opening statements across debates."""
+
+    def __init__(self) -> None:
+        self._cache: dict[tuple[str, str, str], ModelCallResult] = {}
+        self._key_locks: dict[tuple[str, str, str], threading.Lock] = {}
+        self._global_lock = threading.Lock()
+
+    def get_or_call(
+        self,
+        key: tuple[str, str, str],
+        fn: callable,
+    ) -> ModelCallResult:
+        with self._global_lock:
+            if key in self._cache:
+                return self._cache[key]
+            if key not in self._key_locks:
+                self._key_locks[key] = threading.Lock()
+            key_lock = self._key_locks[key]
+
+        with key_lock:
+            if key in self._cache:
+                return self._cache[key]
+            result = fn()
+            self._cache[key] = result
+            return result
 
 
 def run_debate(
@@ -15,6 +52,7 @@ def run_debate(
     pro_model: ModelConfig,
     con_model: ModelConfig,
     rounds: int,
+    opening_cache: OpeningCache | None = None,
 ) -> DebateTranscript:
     debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
     turns: list[DebateTurn] = []
@@ -28,13 +66,22 @@ def run_debate(
             ("pro", pro_model, "A"),
             ("con", con_model, "B"),
         ]:
+            is_pro_opening = round_number == 1 and side == "pro"
             prompt = (
                 opening_prompt(topic, side, rounds)
-                if round_number == 1 and side == "pro"
+                if is_pro_opening
                 else response_prompt(topic, side, round_number, rounds)
             )
             histories[side].append({"role": "user", "content": prompt})
-            result = client.call(model, histories[side])
+
+            if is_pro_opening and opening_cache is not None:
+                cache_key = (model.id, topic.id, "pro")
+                result = opening_cache.get_or_call(
+                    cache_key, lambda: client.call(model, histories[side])
+                )
+            else:
+                result = client.call(model, histories[side])
+
             histories[side].append({"role": "assistant", "content": result.content})
 
             turn = DebateTurn(
@@ -58,6 +105,78 @@ def run_debate(
     )
 
 
+def run_parallel_debate(
+    *,
+    client: ChatModel,
+    topic: TopicConfig,
+    pro_model: ModelConfig,
+    con_model: ModelConfig,
+    rounds: int,
+    opening_cache: OpeningCache | None = None,
+) -> DebateTranscript:
+    debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
+    turns: list[DebateTurn] = []
+    histories: dict[Side, list[dict[str, str]]] = {
+        "pro": [{"role": "system", "content": DEBATER_SYSTEM_PROMPT}],
+        "con": [{"role": "system", "content": DEBATER_SYSTEM_PROMPT}],
+    }
+
+    sides: list[tuple[Side, ModelConfig, str]] = [
+        ("pro", pro_model, "A"),
+        ("con", con_model, "B"),
+    ]
+
+    for round_number in range(1, rounds + 1):
+        for side, _model, _label in sides:
+            if round_number == 1:
+                prompt = parallel_opening_prompt(topic, side, rounds)
+            else:
+                prompt = parallel_response_prompt(topic, side, round_number, rounds)
+            histories[side].append({"role": "user", "content": prompt})
+
+        def _call_side(side: Side, model: ModelConfig) -> ModelCallResult:
+            if round_number == 1 and opening_cache is not None:
+                cache_key = (model.id, topic.id, side)
+                return opening_cache.get_or_call(
+                    cache_key, lambda: client.call(model, histories[side])
+                )
+            return client.call(model, histories[side])
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            pro_future = executor.submit(_call_side, "pro", pro_model)
+            con_future = executor.submit(_call_side, "con", con_model)
+            results: dict[Side, ModelCallResult] = {
+                "pro": pro_future.result(),
+                "con": con_future.result(),
+            }
+
+        round_turns: list[DebateTurn] = []
+        for side, model, label in sides:
+            result = results[side]
+            histories[side].append({"role": "assistant", "content": result.content})
+            turn = DebateTurn(
+                speaker_label=label,
+                speaker_model_id=model.id,
+                side=side,
+                turn_number=round_number,
+                content=result.content,
+                metrics=result.metrics,
+            )
+            round_turns.append(turn)
+
+        _share_round(histories, round_turns)
+        turns.extend(round_turns)
+
+    return DebateTranscript(
+        id=debate_id,
+        topic=topic,
+        pro_model=pro_model,
+        con_model=con_model,
+        rounds=rounds,
+        turns=turns,
+    )
+
+
 def _share_turn(histories: dict[Side, list[dict[str, str]]], turn: DebateTurn) -> None:
     message = (
         f"Opponent turn just delivered by Debater {turn.speaker_label} "
@@ -66,6 +185,19 @@ def _share_turn(histories: dict[Side, list[dict[str, str]]], turn: DebateTurn) -
     for side in histories:
         if side != turn.side:
             histories[side].append({"role": "user", "content": message})
+
+
+def _share_round(
+    histories: dict[Side, list[dict[str, str]]], round_turns: list[DebateTurn]
+) -> None:
+    for turn in round_turns:
+        message = (
+            f"Round {turn.turn_number} delivery by Debater {turn.speaker_label} "
+            f"({turn.side}):\n\n{turn.content}"
+        )
+        for side in histories:
+            if side != turn.side:
+                histories[side].append({"role": "user", "content": message})
 
 
 def debate_pairings(

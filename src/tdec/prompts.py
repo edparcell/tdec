@@ -59,6 +59,47 @@ your side wins overall rather than only on the most recent sub-point.
 """
 
 
+def parallel_opening_prompt(topic: TopicConfig, side: str, rounds: int) -> str:
+    position = topic.pro_position if side == "pro" else topic.con_position
+    return f"""\
+Motion: {topic.motion}
+
+You are arguing {side.upper()}.
+
+Your position:
+{position}
+
+This debate has {rounds} turns per side. Both sides deliver their opening
+cases simultaneously — you have not seen the opponent's opening.
+
+Give your opening case. Go wide: identify the strongest affirmative and
+negative terrain and explain why your side should win across the motion as a
+whole. Do not frame the opponent's choices for them.
+"""
+
+
+def parallel_response_prompt(
+    topic: TopicConfig, side: str, round_number: int, rounds: int
+) -> str:
+    position = topic.pro_position if side == "pro" else topic.con_position
+    turn_name = "closing" if round_number == rounds else f"turn {round_number}"
+    return f"""\
+Motion: {topic.motion}
+
+You are arguing {side.upper()}.
+
+Your position:
+{position}
+
+This is your {turn_name} of {rounds}. Both sides speak simultaneously each
+round — you have seen all prior rounds from both sides, but you have not
+seen the opponent's current round. Answer the opponent's strongest points
+from previous rounds, but keep the whole motion in view. If this is your
+closing turn, explain why your side wins overall rather than only on the
+most recent sub-point.
+"""
+
+
 JUDGE_SYSTEM_PROMPT = """\
 You are an impartial judge in a model-vs-model debate tournament.
 
