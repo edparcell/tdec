@@ -26,6 +26,8 @@ class ModelCallMetrics:
     usage: TokenUsage
     cost_usd: float | None
     cost_error: str | None = None
+    finish_reason: str | None = None
+    response_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from time import perf_counter
 from typing import Any, Protocol
 
@@ -43,6 +44,8 @@ class LiteLLMClient:
                 usage=_extract_usage(response),
                 cost_usd=cost_usd,
                 cost_error=cost_error,
+                finish_reason=_extract_finish_reason(response),
+                response_metadata=_response_metadata(response),
             ),
         )
 
@@ -91,3 +94,71 @@ def _hidden_response_cost(response: Any) -> float | None:
         return None
     value = hidden.get("response_cost")
     return float(value) if value is not None else None
+
+
+def _extract_finish_reason(response: Any) -> str | None:
+    try:
+        value = response.choices[0].finish_reason
+    except (AttributeError, IndexError, TypeError):
+        return None
+    return None if value is None else str(value)
+
+
+def _response_metadata(response: Any) -> dict[str, Any]:
+    data = _to_plain_data(response)
+    if not isinstance(data, dict):
+        return {"raw_type": type(response).__name__, "raw_repr": repr(response)}
+    return _redact_keys(data)
+
+
+def _to_plain_data(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        try:
+            return _to_plain_data(value.model_dump(mode="json"))
+        except TypeError:
+            return _to_plain_data(value.model_dump())
+    if is_dataclass(value):
+        return _to_plain_data(asdict(value))
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _to_plain_data(item) for key, item in value.items()}
+    if isinstance(value, list | tuple | set):
+        return [_to_plain_data(item) for item in value]
+    if hasattr(value, "__dict__"):
+        return {
+            key: _to_plain_data(item)
+            for key, item in vars(value).items()
+            if not key.startswith("__")
+        }
+    return value
+
+
+def _redact_keys(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if _is_secret_key(key):
+                redacted[key] = "<redacted>"
+            else:
+                redacted[key] = _redact_keys(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_keys(item) for item in value]
+    return value
+
+
+def _is_secret_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    compact = normalized.replace("_", "")
+    return compact in {
+        "apikey",
+        "authorization",
+        "key",
+        "token",
+        "accesstoken",
+        "refreshtoken",
+        "bearertoken",
+        "clientsecret",
+        "secret",
+    }

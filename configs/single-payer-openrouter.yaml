@@ -30,31 +30,31 @@ debaters:
     model: openai/gpt-5-nano
     api_key_env: OPENROUTER_API_KEY
     temperature: null
-    max_tokens: 1400
+    max_tokens: 10000
   - id: deepseek_v4_flash
     provider: openrouter
     model: deepseek/deepseek-v4-flash
     api_key_env: OPENROUTER_API_KEY
     temperature: 0.7
-    max_tokens: 1400
+    max_tokens: 10000
   - id: qwen_3_5_flash
     provider: openrouter
     model: qwen/qwen3.5-flash-02-23
     api_key_env: OPENROUTER_API_KEY
     temperature: 0.7
-    max_tokens: 1400
+    max_tokens: 10000
   - id: mistral_small_4
     provider: openrouter
     model: mistralai/mistral-small-2603
     api_key_env: OPENROUTER_API_KEY
     temperature: 0.7
-    max_tokens: 1400
+    max_tokens: 10000
   - id: llama_4_scout
     provider: openrouter
     model: meta-llama/llama-4-scout
     api_key_env: OPENROUTER_API_KEY
     temperature: 0.7
-    max_tokens: 1400
+    max_tokens: 10000
 
 judges:
   - id: claude_sonnet_4_6
@@ -62,10 +62,10 @@ judges:
     model: anthropic/claude-sonnet-4.6
     api_key_env: OPENROUTER_API_KEY
     temperature: null
-    max_tokens: 2600
+    max_tokens: 10000
   - id: grok_4_3
     provider: openrouter
     model: x-ai/grok-4.3
     api_key_env: OPENROUTER_API_KEY
     temperature: 0.2
-    max_tokens: 2600
+    max_tokens: 10000
