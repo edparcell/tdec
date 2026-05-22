@@ -90,7 +90,8 @@ body {
   display: flex;
   gap: 0;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  padding: 0 24px;
+  background: var(--surface);
 }
 
 .tab-btn {
@@ -115,7 +116,65 @@ body {
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
+.judges-panel {
+  padding: 20px 24px;
+  overflow-y: auto;
+  height: calc(100vh - 150px);
+}
+
 /* Judge analytics */
+.judge-vote-chart {
+  margin-bottom: 24px;
+}
+
+.judge-vote-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.judge-vote-row .jv-label {
+  width: 160px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.judge-vote-row .jv-bar-wrap {
+  flex: 1;
+  display: flex;
+  height: 22px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface2);
+}
+
+.jv-bar-wrap .jv-pro { background: var(--pro-color); }
+.jv-bar-wrap .jv-con { background: var(--con-color); }
+.jv-bar-wrap .jv-tie { background: var(--tie-color); }
+
+.jv-bar-wrap .jv-segment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.judge-vote-row .jv-count {
+  width: 60px;
+  flex-shrink: 0;
+  padding-left: 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .judge-summary-cards {
   display: flex;
   gap: 12px;

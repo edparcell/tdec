@@ -18,27 +18,31 @@
   <div class="motion-bar" id="motion-bar"></div>
 </div>
 
-<div class="main-layout">
-  <div class="left-panel" id="left-panel">
-    <div class="tab-bar">
-      <button class="tab-btn active" onclick="switchTab('debates')">Debates</button>
-      <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
-    </div>
-    <div id="tab-debates" class="tab-content active">
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('debates')">Debates</button>
+  <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
+</div>
+
+<div id="tab-debates" class="tab-content active">
+  <div class="main-layout">
+    <div class="left-panel" id="left-panel">
       <div id="elo-section"></div>
       <div id="matrix-section"></div>
     </div>
-    <div id="tab-judges" class="tab-content">
-      <div id="judge-votes-section"></div>
-      <div id="judge-debater-section"></div>
-      <div id="judge-agreement-section"></div>
+    <div class="right-panel" id="right-panel">
+      <button class="back-btn" id="back-btn" onclick="showList()">Back to matrix</button>
+      <div id="detail-content">
+        <div class="detail-placeholder">Click a cell in the cross-table to view the debate.</div>
+      </div>
     </div>
   </div>
-  <div class="right-panel" id="right-panel">
-    <button class="back-btn" id="back-btn" onclick="showList()">Back to matrix</button>
-    <div id="detail-content">
-      <div class="detail-placeholder">Click a cell in the cross-table to view the debate.</div>
-    </div>
+</div>
+
+<div id="tab-judges" class="tab-content">
+  <div class="judges-panel">
+    <div id="judge-votes-section"></div>
+    <div id="judge-debater-section"></div>
+    <div id="judge-agreement-section"></div>
   </div>
 </div>
 
@@ -233,6 +237,13 @@ function getOrderedModels(pairs) {
 
 function shortName(id) { return id.replace(/_/g, ' '); }
 
+function getEloSortedDebaters() {
+  return SUMMARY.models
+    .filter(m => m.elo !== null)
+    .sort((a, b) => b.elo - a.elo)
+    .map(m => m.model_id);
+}
+
 function cellGradient(ratio) {
   if (ratio > 0) return `rgba(34,197,94,${Math.min(ratio * 0.5, 0.45).toFixed(2)})`;
   if (ratio < 0) return `rgba(239,68,68,${Math.min(Math.abs(ratio) * 0.5, 0.45).toFixed(2)})`;
@@ -401,21 +412,21 @@ function renderJudgeVotes() {
   const pj = JUDGE_STATS.per_judge;
 
   let html = '<div class="section-title">Judge Pro/Con Voting</div>';
-  html += '<div class="judge-summary-cards">';
+  html += '<div class="judge-vote-chart">';
   for (const jid of judges) {
     const s = pj[jid];
     const total = s.total || 1;
-    const proPct = (100 * s.pro / total).toFixed(0);
-    const conPct = (100 * s.con / total).toFixed(0);
-    const tiePct = (100 * (s.tie || 0) / total).toFixed(0);
-    html += `<div class="judge-summary-card">`;
-    html += `<div class="judge-id">${shortName(jid)}</div>`;
-    html += `<div class="vote-bar">`;
-    html += `<div class="pro-bar" style="width:${proPct}%"></div>`;
-    html += `<div class="con-bar" style="width:${conPct}%"></div>`;
-    html += `<div class="tie-bar" style="width:${tiePct}%"></div>`;
+    const proPct = (100 * s.pro / total);
+    const conPct = (100 * s.con / total);
+    const tiePct = (100 * (s.tie || 0) / total);
+    html += `<div class="judge-vote-row">`;
+    html += `<div class="jv-label">${shortName(jid)}</div>`;
+    html += `<div class="jv-bar-wrap">`;
+    if (proPct > 0) html += `<div class="jv-segment jv-pro" style="width:${proPct}%">${proPct >= 12 ? proPct.toFixed(0) + '%' : ''}</div>`;
+    if (tiePct > 0) html += `<div class="jv-segment jv-tie" style="width:${tiePct}%">${tiePct >= 12 ? tiePct.toFixed(0) + '%' : ''}</div>`;
+    if (conPct > 0) html += `<div class="jv-segment jv-con" style="width:${conPct}%">${conPct >= 12 ? conPct.toFixed(0) + '%' : ''}</div>`;
     html += `</div>`;
-    html += `<div class="vote-labels"><span style="color:var(--pro-color)">${proPct}% pro</span> · <span style="color:var(--con-color)">${conPct}% con</span>${s.tie ? ` · <span style="color:var(--tie-color)">${tiePct}% tie</span>` : ''} · ${s.total} votes</div>`;
+    html += `<div class="jv-count">${s.total} votes</div>`;
     html += `</div>`;
   }
   html += '</div>';
@@ -425,7 +436,7 @@ function renderJudgeVotes() {
 function renderJudgeDebaterMatrix() {
   const section = document.getElementById('judge-debater-section');
   const judges = JUDGE_STATS.judge_ids;
-  const debaters = JUDGE_STATS.debater_ids;
+  const debaters = getEloSortedDebaters();
   const jd = JUDGE_STATS.judge_debater;
 
   let html = '<div class="section-title">Judge Win Rate by Debater</div>';
