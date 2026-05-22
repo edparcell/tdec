@@ -103,6 +103,24 @@ def write_summary(run_dir: Path, summary: dict) -> None:
 
     lines.append("## Debate Pair Results")
     lines.append("")
+    lines.append("Cells show pro judge wins / con judge wins for the row model as pro.")
+    lines.append("")
+    for matrix in summary["pair_matrices"]:
+        lines.append(f"### {matrix['topic_id']}")
+        lines.append("")
+        con_ids = matrix["con_model_ids"]
+        lines.append("| Pro \\ Con | " + " | ".join(f"`{model_id}`" for model_id in con_ids) + " |")
+        lines.append("| --- | " + " | ".join("---:" for _ in con_ids) + " |")
+        for pro_id in matrix["pro_model_ids"]:
+            cells = matrix["cells"].get(pro_id, {})
+            row = [f"`{pro_id}`"]
+            for con_id in con_ids:
+                row.append(_format_pair_matrix_cell(cells.get(con_id)))
+            lines.append("| " + " | ".join(row) + " |")
+        lines.append("")
+
+    lines.append("## Detailed Debate Pair Results")
+    lines.append("")
     lines.append("| Debate | Pro model | Con model | Pro judges | Con judges | Ties | Parse errors |")
     lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: |")
     for pair in summary["pairs"]:
@@ -288,6 +306,20 @@ def _format_cost(value: float | None) -> str:
     if value is None:
         return "unknown"
     return f"${value:.6f}"
+
+
+def _format_pair_matrix_cell(cell: object) -> str:
+    if not isinstance(cell, dict):
+        return "-"
+    extras = []
+    if cell["tie_judges"]:
+        extras.append(f"T{cell['tie_judges']}")
+    if cell["parse_errors"]:
+        extras.append(f"E{cell['parse_errors']}")
+    result = cell["result"]
+    if extras:
+        return f"{result} ({' '.join(extras)})"
+    return result
 
 
 def _escape_table_text(value: str) -> str:

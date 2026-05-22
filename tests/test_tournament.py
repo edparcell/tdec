@@ -175,6 +175,69 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
     assert summary["pairs"][0]["con_judges"] == 0
     assert summary["pairs"][-1]["pro_judges"] == 0
     assert summary["pairs"][-1]["con_judges"] == 2
+    assert summary["pair_matrices"] == [
+        {
+            "topic_id": "topic",
+            "pro_model_ids": ["a", "b", "c"],
+            "con_model_ids": ["a", "b", "c"],
+            "cells": {
+                "a": {
+                    "b": {
+                        "debate_id": "topic__a_pro__b_con",
+                        "result": "2/0",
+                        "pro_judges": 2,
+                        "con_judges": 0,
+                        "tie_judges": 0,
+                        "parse_errors": 0,
+                    },
+                    "c": {
+                        "debate_id": "topic__a_pro__c_con",
+                        "result": "2/0",
+                        "pro_judges": 2,
+                        "con_judges": 0,
+                        "tie_judges": 0,
+                        "parse_errors": 0,
+                    },
+                },
+                "b": {
+                    "a": {
+                        "debate_id": "topic__b_pro__a_con",
+                        "result": "2/0",
+                        "pro_judges": 2,
+                        "con_judges": 0,
+                        "tie_judges": 0,
+                        "parse_errors": 0,
+                    },
+                    "c": {
+                        "debate_id": "topic__b_pro__c_con",
+                        "result": "0/2",
+                        "pro_judges": 0,
+                        "con_judges": 2,
+                        "tie_judges": 0,
+                        "parse_errors": 0,
+                    },
+                },
+                "c": {
+                    "a": {
+                        "debate_id": "topic__c_pro__a_con",
+                        "result": "0/2",
+                        "pro_judges": 0,
+                        "con_judges": 2,
+                        "tie_judges": 0,
+                        "parse_errors": 0,
+                    },
+                    "b": {
+                        "debate_id": "topic__c_pro__b_con",
+                        "result": "0/2",
+                        "pro_judges": 0,
+                        "con_judges": 2,
+                        "tie_judges": 0,
+                        "parse_errors": 0,
+                    },
+                },
+            },
+        }
+    ]
     assert {model["model_id"] for model in summary["models"]} == {"a", "b", "c", "judge_1", "judge_2"}
     assert {model["model_id"]: model["calls"] for model in summary["models"]} == {
         "a": 4,
@@ -198,6 +261,9 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
     assert len(list((run_dir / "judgements").glob("*.json"))) == 12
     assert (run_dir / "summary.json").is_file()
     assert (run_dir / "summary.md").is_file()
+    summary_md = (run_dir / "summary.md").read_text(encoding="utf-8")
+    assert "| Pro \\ Con | `a` | `b` | `c` |" in summary_md
+    assert "| `a` | - | 2/0 | 2/0 |" in summary_md
 
 
 def test_run_tournament_includes_self_debates_by_default(tmp_path: Path) -> None:

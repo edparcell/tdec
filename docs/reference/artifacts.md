@@ -106,13 +106,26 @@ Fields:
 
 `summary.json` is the machine-readable aggregate.
 
+Important summary fields:
+
+| Field | Description |
+| --- | --- |
+| `motions` | Per-topic carried/defeated/tied totals. |
+| `models` | Per-model calls, latency, cost, tokens, and Elo. |
+| `pairs` | Flat list of ordered debate pair results. |
+| `pair_matrices` | Per-topic matrix of pro model rows by con model columns. |
+| `debates` | Per-debate aggregate timings, costs, and judge counts. |
+| `errors` | Skipped provider call failures. |
+
 `summary.md` is the human-readable report with:
 
 - Total cost and latency.
 - Motion result table.
 - Debater Elo table.
 - Per-model timing, cost, and token table.
-- Pair result table.
+- Pair result matrix with pro models as rows, con models as columns, and cells
+  like `2/0` for pro judge wins / con judge wins.
+- Detailed pair result table.
 - Skipped call table when errors occurred.
 - Per-debate details.
 

@@ -216,6 +216,7 @@ def summarize(
         })
     model_summaries = _model_summaries(debates, judgements)
     pair_summaries = _pair_summaries(debate_summaries)
+    pair_matrices = _pair_matrices(pair_summaries)
     motion_summaries = _motion_summaries(debate_summaries)
     return {
         "run_dir": str(run_dir),
@@ -235,6 +236,7 @@ def summarize(
         ),
         "models": model_summaries,
         "pairs": pair_summaries,
+        "pair_matrices": pair_matrices,
         "motions": motion_summaries,
         "debates": debate_summaries,
     }
@@ -352,6 +354,40 @@ def _pair_summaries(debate_summaries: list[dict]) -> list[dict]:
             "parse_errors": debate["parse_errors"],
         })
     return rows
+
+
+def _pair_matrices(pair_summaries: list[dict]) -> list[dict]:
+    by_topic: dict[str, dict] = {}
+    for pair in pair_summaries:
+        matrix = by_topic.setdefault(
+            pair["topic_id"],
+            {
+                "topic_id": pair["topic_id"],
+                "pro_model_ids": _model_ids_for_topic(pair_summaries, pair["topic_id"]),
+                "con_model_ids": _model_ids_for_topic(pair_summaries, pair["topic_id"]),
+                "cells": {},
+            },
+        )
+        matrix["cells"].setdefault(pair["pro_model_id"], {})[pair["con_model_id"]] = {
+            "debate_id": pair["debate_id"],
+            "result": f"{pair['pro_judges']}/{pair['con_judges']}",
+            "pro_judges": pair["pro_judges"],
+            "con_judges": pair["con_judges"],
+            "tie_judges": pair["tie_judges"],
+            "parse_errors": pair["parse_errors"],
+        }
+    return list(by_topic.values())
+
+
+def _model_ids_for_topic(pair_summaries: list[dict], topic_id: str) -> list[str]:
+    model_ids = []
+    for pair in pair_summaries:
+        if pair["topic_id"] != topic_id:
+            continue
+        for key in ("pro_model_id", "con_model_id"):
+            if pair[key] not in model_ids:
+                model_ids.append(pair[key])
+    return model_ids
 
 
 def _motion_summaries(debate_summaries: list[dict]) -> list[dict]:
