@@ -88,127 +88,6 @@ class JudgeRunConfig:
     judging: JudgingConfig
 
 
-# ── Default prompt set (current hardcoded prompts as templates) ──
-
-DEFAULT_PROMPT_SET_CONFIG = PromptSetConfig(
-    id="default",
-    debater_system="""\
-You are a serious competitive debater in a model-vs-model debate.
-$strategy_block
-Rules:
-- Argue only for your assigned side.
-- Build a broad case across the whole motion. Include moral, institutional,
-  legal, economic, strategic, execution, and real-world tradeoff dimensions when
-  relevant.
-- Do not let the debate collapse onto one narrow example unless that example is
-  genuinely decisive.
-- Rebut the opponent directly, but do not accept their framing as the full map
-  of the debate.
-- Do not tell the opponent which points they must answer.
-- Use clear structure and concrete reasoning.
-- Do not claim access to private facts or fabricated sources.
-""",
-    opening="""\
-Motion: $motion
-$context_block
-You are arguing $side.
-
-This debate has $rounds turns per side. You go first.
-
-Give your opening case. Go wide: identify the strongest affirmative and
-negative terrain and explain why your side should win across the motion as a
-whole. Do not frame the opponent's choices for them.
-""",
-    response="""\
-Motion: $motion
-$context_block
-You are arguing $side.
-
-This is your $turn_name of $rounds. Answer the opponent's strongest points,
-but keep the whole motion in view. If this is your closing turn, explain why
-your side wins overall rather than only on the most recent sub-point.
-""",
-    parallel_opening="""\
-Motion: $motion
-$context_block
-You are arguing $side.
-
-This debate has $rounds turns per side. Both sides deliver their opening
-cases simultaneously — you have not seen the opponent's opening.
-
-Give your opening case. Go wide: identify the strongest affirmative and
-negative terrain and explain why your side should win across the motion as a
-whole. Do not frame the opponent's choices for them.
-""",
-    parallel_response="""\
-Motion: $motion
-$context_block
-You are arguing $side.
-
-This is your $turn_name of $rounds. Both sides speak simultaneously each
-round — you have seen all prior rounds from both sides, but you have not
-seen the opponent's current round. Answer the opponent's strongest points
-from previous rounds, but keep the whole motion in view. If this is your
-closing turn, explain why your side wins overall rather than only on the
-most recent sub-point.
-""",
-    judge_system="""\
-You are an impartial judge in a model-vs-model debate tournament.
-$style_block
-Judge the debate from the transcript only. The debaters are anonymized as
-Debater A and Debater B. Do not reward a side because of your prior political or
-policy preference. Reward debate quality: breadth, responsiveness, evidence,
-moral reasoning, institutional reasoning, strategic clarity, and closing
-weighing.
-
-Return only valid compact JSON. Do not wrap it in Markdown. Keep all string
-values short enough that the entire response can fit comfortably in 900 tokens.
-""",
-    judge="""\
-Motion: $motion
-
-Transcript:
-$transcript
-
-Return exactly this compact JSON shape:
-{
-  "winner": "pro" | "con" | "tie",
-  "winner_label": "A" | "B" | "tie",
-  "confidence": 0.0,
-  "pro_score": 0,
-  "con_score": 0,
-  "rubric": {
-    "breadth": {"pro": 0, "con": 0},
-    "responsiveness": {"pro": 0, "con": 0},
-    "evidence_quality": {"pro": 0, "con": 0},
-    "moral_reasoning": {"pro": 0, "con": 0},
-    "institutional_reasoning": {"pro": 0, "con": 0},
-    "strategic_clarity": {"pro": 0, "con": 0}
-  },
-  "decisive_reasons": ["reason under 120 chars", "reason under 120 chars", "reason under 120 chars"],
-  "audience_estimate": {"pro_votes": 0, "con_votes": 0},
-  "summary": "one sentence under 200 chars"
-}
-
-Scores are 0-100 for side totals and 0-10 for rubric cells. Audience votes must
-sum to 100. Use "tie" only when genuinely inseparable.
-""",
-    judge_repair="""\
-Your previous judgement was not valid JSON.
-
-JSON parse error:
-$error
-
-Previous output:
-$bad_output
-
-Return only corrected compact JSON in the same schema requested before. Do not
-add Markdown or commentary. Do not change the judgement unless required to make
-the JSON valid.
-""",
-)
-
-
 # ── Loaders ──
 
 
@@ -230,12 +109,11 @@ def load_run_config(path: str | Path) -> TournamentConfig:
     ]
 
     prompt_set_name = data.get("prompt_set")
-    if prompt_set_name:
-        prompt_set = load_prompt_set_config(
-            config_dir / "prompt-sets" / f"{prompt_set_name}.yaml"
-        )
-    else:
-        prompt_set = DEFAULT_PROMPT_SET_CONFIG
+    if not prompt_set_name:
+        raise ValueError("Config key 'prompt_set' is required")
+    prompt_set = load_prompt_set_config(
+        config_dir / "prompt-sets" / f"{prompt_set_name}.yaml"
+    )
 
     run_data = _required_mapping(data, "run")
     run = RunConfig(

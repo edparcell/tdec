@@ -7,9 +7,10 @@ from pathlib import Path
 
 import click
 
-from tdec.config import load_judge_config, load_run_config
+from tdec.config import load_judge_config, load_prompt_set_config, load_run_config
 from tdec.env import load_env_file
 from tdec.models import LiteLLMClient
+from tdec.prompts import PromptSet
 from tdec.tournament import run_posthoc_judges, run_tournament
 from tdec.viewer import export_html, serve as serve_viewer
 
@@ -97,24 +98,38 @@ def view(run_dir: Path, port: int | None, open_browser: bool) -> None:
     default="compact",
     show_default=True,
 )
+@click.option(
+    "--prompt-set",
+    "prompt_set_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Prompt-set YAML for judge prompts (default: configs/prompt-sets/default.yaml).",
+)
 def judge(
     run_dir: Path,
     judge_config_path: Path,
     workers: int,
     artifact_verbosity: str,
+    prompt_set_path: Path | None,
 ) -> None:
     """Add judges to an existing tournament run."""
     if not (run_dir / "summary.json").exists():
         raise click.ClickException(f"No summary.json found in {run_dir}")
     load_env_file(judge_config_path.parent.parent / ".env")
     load_env_file(".env")
+    if prompt_set_path is None:
+        prompt_set_path = Path("configs/prompt-sets/default.yaml")
+    if not prompt_set_path.exists():
+        raise click.ClickException(f"Prompt-set not found: {prompt_set_path}")
     config = load_judge_config(judge_config_path)
+    ps = PromptSet(load_prompt_set_config(prompt_set_path))
     result = run_posthoc_judges(
         run_dir=run_dir,
         judge_config=config,
         client=LiteLLMClient(),
         artifact_verbosity=artifact_verbosity,
         workers=workers,
+        prompt_set=ps,
     )
     click.echo(f"Updated summary at {result['run_dir']}")
 

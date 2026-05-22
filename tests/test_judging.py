@@ -1,4 +1,6 @@
-from tdec.config import DebaterConfig, JudgeModelConfig, JudgingConfig, TopicConfig
+from pathlib import Path
+
+from tdec.config import DebaterConfig, JudgeModelConfig, JudgingConfig, TopicConfig, load_prompt_set_config
 from tdec.debate_types import (
     DebateTranscript,
     ModelCallMetrics,
@@ -6,7 +8,9 @@ from tdec.debate_types import (
     TokenUsage,
 )
 from tdec.judging import judge_debate, parse_json_response
-from tdec.prompts import default_prompt_set
+from tdec.prompts import PromptSet
+
+_PROMPT_SET = PromptSet(load_prompt_set_config(Path("configs/prompt-sets/default.yaml")))
 
 
 def test_parse_json_response_accepts_plain_json() -> None:
@@ -81,7 +85,7 @@ def test_judge_debate_records_parse_error_instead_of_raising() -> None:
         client=BadJsonClient(),
         transcript=_transcript(),
         judge_model=JudgeModelConfig(id="judge", provider="test", model="judge"),
-        prompt_set=default_prompt_set(),
+        prompt_set=_PROMPT_SET,
     )
 
     assert judgement.parsed["winner"] == "parse_error"
@@ -100,7 +104,7 @@ def test_judge_debate_repairs_bad_json() -> None:
         transcript=_transcript(),
         judge_model=JudgeModelConfig(id="judge", provider="test", model="judge"),
         judging_config=JudgingConfig(repair_retries=1, parse_retries=0),
-        prompt_set=default_prompt_set(),
+        prompt_set=_PROMPT_SET,
     )
 
     assert judgement.parsed["winner"] == "con"

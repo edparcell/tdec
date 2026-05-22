@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from tdec.config import (
-    DEFAULT_PROMPT_SET_CONFIG,
     load_debater_config,
     load_judge_model_config,
     load_run_config,
@@ -28,11 +27,14 @@ def _write_judge(path: Path, **overrides) -> None:
 def _setup_run_dir(tmp_path: Path, *, debaters=("debater",), judges=("judge",)) -> Path:
     (tmp_path / "debaters").mkdir()
     (tmp_path / "judges").mkdir()
+    (tmp_path / "prompt-sets").mkdir()
     (tmp_path / "runs").mkdir()
     for name in debaters:
         _write_debater(tmp_path / "debaters" / f"{name}.yaml", id=name)
     for name in judges:
         _write_judge(tmp_path / "judges" / f"{name}.yaml", id=name)
+    import shutil
+    shutil.copy(Path("configs/prompt-sets/default.yaml"), tmp_path / "prompt-sets" / "default.yaml")
     return tmp_path
 
 
@@ -41,6 +43,7 @@ def test_load_run_config(tmp_path: Path) -> None:
     run_path = tmp_path / "runs" / "test.yaml"
     run_path.write_text(
         """\
+prompt_set: default
 debaters:
   - a
   - b
@@ -92,6 +95,7 @@ run:
   name: test
   rounds: 1
   output_dir: runs
+prompt_set: default
 """,
         encoding="utf-8",
     )
@@ -116,6 +120,7 @@ run:
   name: test
   rounds: 1
   output_dir: runs
+prompt_set: default
 """,
         encoding="utf-8",
     )
@@ -160,7 +165,7 @@ style: Focus on evidence quality.
     assert config.style == "Focus on evidence quality."
 
 
-def test_load_run_config_uses_default_prompt_set(tmp_path: Path) -> None:
+def test_load_run_config_raises_without_prompt_set(tmp_path: Path) -> None:
     _setup_run_dir(tmp_path)
     run_path = tmp_path / "runs" / "test.yaml"
     run_path.write_text(
@@ -178,8 +183,8 @@ run:
         encoding="utf-8",
     )
 
-    config = load_run_config(run_path)
-    assert config.prompt_set is DEFAULT_PROMPT_SET_CONFIG
+    with pytest.raises(ValueError, match="prompt_set"):
+        load_run_config(run_path)
 
 
 def test_load_run_config_with_topic_context(tmp_path: Path) -> None:
@@ -197,6 +202,7 @@ run:
   name: test
   rounds: 1
   output_dir: runs
+prompt_set: default
 """,
         encoding="utf-8",
     )

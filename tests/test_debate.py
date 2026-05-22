@@ -1,4 +1,6 @@
-from tdec.config import DebaterConfig, ModelConfig, TopicConfig
+from pathlib import Path
+
+from tdec.config import DebaterConfig, ModelConfig, TopicConfig, load_prompt_set_config
 from tdec.debate import debate_pairings, run_debate
 from tdec.debate_types import (
     DebateTranscript,
@@ -7,7 +9,9 @@ from tdec.debate_types import (
     ModelCallResult,
     TokenUsage,
 )
-from tdec.prompts import default_prompt_set
+from tdec.prompts import PromptSet
+
+_PROMPT_SET = PromptSet(load_prompt_set_config(Path("configs/prompt-sets/default.yaml")))
 
 
 class StubClient:
@@ -71,7 +75,7 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
         pro_model=pro,
         con_model=con,
         rounds=3,
-        prompt_set=default_prompt_set(),
+        prompt_set=_PROMPT_SET,
     )
 
     assert transcript.id == "topic__model_a_pro__model_b_con"

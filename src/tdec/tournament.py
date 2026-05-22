@@ -27,7 +27,7 @@ from tdec.debate import OpeningCache, debate_pairings, run_debate, run_parallel_
 from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 from tdec.judging import judge_debate
 from tdec.models import ChatModel, ModelCallError
-from tdec.prompts import PromptSet, default_prompt_set
+from tdec.prompts import PromptSet
 
 ELO_K = 32
 STARTING_ELO = 1500.0
@@ -163,9 +163,9 @@ def run_posthoc_judges(
     client: ChatModel,
     artifact_verbosity: ArtifactVerbosity = "compact",
     workers: int = 1,
-    prompt_set: PromptSet | None = None,
+    prompt_set: PromptSet,
 ) -> TournamentResult:
-    ps = prompt_set or default_prompt_set()
+    ps = prompt_set
     debates = load_debate_transcripts(run_dir)
     existing = existing_judgement_keys(run_dir)
 

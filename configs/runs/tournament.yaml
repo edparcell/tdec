@@ -1,3 +1,5 @@
+prompt_set: default
+
 debaters:
   - local-tinyllama
 

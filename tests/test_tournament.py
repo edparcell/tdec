@@ -4,7 +4,6 @@ import threading
 import time
 
 from tdec.config import (
-    DEFAULT_PROMPT_SET_CONFIG,
     DebaterConfig,
     JudgeModelConfig,
     JudgingConfig,
@@ -12,10 +11,13 @@ from tdec.config import (
     RunConfig,
     TopicConfig,
     TournamentConfig,
+    load_prompt_set_config,
 )
 from tdec.debate_types import ModelCallMetrics, ModelCallResult, TokenUsage
 from tdec.models import ModelCallError
 from tdec.tournament import run_tournament
+
+_PROMPT_SET_CONFIG = load_prompt_set_config(Path("configs/prompt-sets/default.yaml"))
 
 
 def _config(tmp_path: Path, **overrides) -> TournamentConfig:
@@ -32,7 +34,7 @@ def _config(tmp_path: Path, **overrides) -> TournamentConfig:
             JudgeModelConfig(id="judge_2", provider="test", model="j2"),
         ],
         "judging": JudgingConfig(),
-        "prompt_set": DEFAULT_PROMPT_SET_CONFIG,
+        "prompt_set": _PROMPT_SET_CONFIG,
     }
     defaults.update(overrides)
     return TournamentConfig(**defaults)

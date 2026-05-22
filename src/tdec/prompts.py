@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from string import Template
 
-from tdec.config import DEFAULT_PROMPT_SET_CONFIG, PromptSetConfig
+from tdec.config import PromptSetConfig
 from tdec.debate_types import DebateTranscript
 
 
@@ -97,10 +97,6 @@ class PromptSet:
             bad_output=bad_output,
             error=error,
         )
-
-
-def default_prompt_set() -> PromptSet:
-    return PromptSet(DEFAULT_PROMPT_SET_CONFIG)
 
 
 def _context_block(context: str | None) -> str:
