@@ -1,0 +1,44 @@
+# TDEC Documentation For LLMs
+
+TDEC means Top Debate Engine Championship. It runs structured debates between
+LLMs and scores them with independent judge LLMs.
+
+Start here:
+
+- README.md - short project overview and common commands.
+- docs/tutorials/first-tournament.md - hands-on beginner path.
+- docs/how-to/ - task-oriented recipes.
+- docs/reference/ - exact command, configuration, and artifact descriptions.
+- docs/explanation/ - design rationale and scoring model.
+
+Key source files:
+
+- src/tdec/cli.py - Click command line entry point.
+- src/tdec/config.py - YAML config dataclasses and validation.
+- src/tdec/debate.py - turn sequencing and model pairings.
+- src/tdec/judging.py - judge prompt execution and JSON repair.
+- src/tdec/models.py - LiteLLM calls, metrics, cost extraction, metadata capture.
+- src/tdec/tournament.py - tournament orchestration, thread pool, summaries, Elo.
+- src/tdec/artifacts.py - run directory, compact/full artifact writing.
+- src/tdec/prompts.py - debater and judge prompt templates.
+
+Important behavior:
+
+- Self-debates are enabled by default. Set `run.include_self_debates: false`
+  to run only cross-model pairings.
+- `run.workers` controls concurrent debate and judgement jobs. The CLI
+  `--workers` option overrides it.
+- Provider failures skip the failed debate or judgement and write error records
+  to `errors/`; they do not stop the full tournament.
+- Artifacts are compact by default. Use `--artifact-verbosity full` to keep full
+  raw response metadata for every model call.
+- Blank model outputs always keep full response metadata so the failure can be
+  diagnosed after the run.
+- Missing API key environment variables fail before the tournament starts.
+
+Documentation style:
+
+- Tutorials teach by doing, with minimal explanation.
+- How-to guides solve one named task.
+- Reference pages describe exact fields and commands.
+- Explanation pages discuss design tradeoffs.
