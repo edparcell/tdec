@@ -1,0 +1,23 @@
+judges:
+  - id: gpt_5_mini
+    provider: openrouter
+    model: openai/gpt-5-mini
+    api_key_env: OPENROUTER_API_KEY
+    temperature: null
+    max_tokens: 10000
+  - id: gemini_3_5_flash
+    provider: openrouter
+    model: google/gemini-3.5-flash
+    api_key_env: OPENROUTER_API_KEY
+    temperature: 0.2
+    max_tokens: 10000
+  - id: kimi_k2_5
+    provider: openrouter
+    model: moonshotai/kimi-k2.5
+    api_key_env: OPENROUTER_API_KEY
+    temperature: 0.2
+    max_tokens: 10000
+
+judging:
+  repair_retries: 1
+  parse_retries: 1

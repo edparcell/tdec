@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TDEC Viewer — {{ run_name }}</title>
+{% if inline_css %}
+<style>{{ inline_css }}</style>
+{% else %}
+<link rel="stylesheet" href="/static/viewer.css">
+{% endif %}
+</head>
+<body>
+
+<div class="header">
+  <h1>TDEC <span class="run-name">{{ run_name }}</span></h1>
+  <div class="stats-bar" id="stats-bar"></div>
+  <div class="motion-bar" id="motion-bar"></div>
+</div>
+
+<div class="main-layout">
+  <div class="left-panel" id="left-panel">
+    <div id="elo-section"></div>
+    <div id="matrix-section"></div>
+  </div>
+  <div class="right-panel" id="right-panel">
+    <button class="back-btn" id="back-btn" onclick="showList()">Back to matrix</button>
+    <div id="detail-content">
+      <div class="detail-placeholder">Click a cell in the cross-table to view the debate.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const SUMMARY = {{ summary|safe }};
+const ALL_DEBATES = {{ all_debates|safe }};
+const ALL_JUDGEMENTS = {{ all_judgements|safe }};
+const TOPIC_MOTIONS = {{ topic_motions|safe }};
+
+let activeTopic = null;
+
+// ── Stats bar ──
+function renderStats() {
+  const bar = document.getElementById('stats-bar');
+  const cost = SUMMARY.total_cost_usd;
+  const latency = SUMMARY.total_latency_seconds;
+  const debateCount = SUMMARY.debates.length;
+  const modelCount = SUMMARY.models.length;
+
+  let html = `
+    <span class="stat"><strong>$${cost.toFixed(4)}</strong> total cost</span>
+    <span class="stat"><strong>${formatTime(latency)}</strong> total latency</span>
+    <span class="stat"><strong>${debateCount}</strong> debates</span>
+    <span class="stat"><strong>${modelCount}</strong> models</span>
+  `;
+  bar.innerHTML = html;
+}
+
+function formatTime(s) {
+  if (s < 60) return s.toFixed(1) + 's';
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return `${m}m${sec}s`;
+}
+
+// ── Motion bar ──
+function renderMotionBar() {
+  const bar = document.getElementById('motion-bar');
+  const motions = SUMMARY.motions || [];
+  const topics = motions.map(m => m.topic_id);
+
+  if (topics.length === 0) return;
+
+  activeTopic = topics[0];
+
+  if (topics.length === 1) {
+    const motion = TOPIC_MOTIONS[topics[0]];
+    const motionText = motion ? motion.motion : topics[0];
+    const result = motions[0];
+    bar.innerHTML = `<span class="motion-text">${escapeHtml(motionText)}</span>
+      <span class="stat" style="margin-left:12px">${result.result} (${result.pro_judges}P/${result.con_judges}C/${result.tie_judges}T)</span>`;
+  } else {
+    let html = '<div class="topic-pills">';
+    for (const topic of topics) {
+      const motion = TOPIC_MOTIONS[topic];
+      const label = motion ? truncate(motion.motion, 60) : topic;
+      html += `<span class="topic-pill${topic === activeTopic ? ' active' : ''}" data-topic="${topic}" onclick="selectTopic('${topic}')">${escapeHtml(label)}</span>`;
+    }
+    html += '</div>';
+    const motion = TOPIC_MOTIONS[activeTopic];
+    html += `<span class="motion-text" id="active-motion-text">${escapeHtml(motion ? motion.motion : activeTopic)}</span>`;
+    const result = motions.find(m => m.topic_id === activeTopic);
+    if (result) {
+      html += ` <span class="stat">${result.result} (${result.pro_judges}P/${result.con_judges}C/${result.tie_judges}T)</span>`;
+    }
+    bar.innerHTML = html;
+  }
+}
+
+function selectTopic(topicId) {
+  activeTopic = topicId;
+  document.querySelectorAll('.topic-pill').forEach(el => {
+    el.classList.toggle('active', el.dataset.topic === topicId);
+  });
+  const motion = TOPIC_MOTIONS[topicId];
+  const motionEl = document.getElementById('active-motion-text');
+  if (motionEl && motion) motionEl.textContent = motion.motion;
+
+  document.querySelectorAll('.matrix-block').forEach(el => {
+    el.style.display = el.dataset.topic === topicId ? '' : 'none';
+  });
+}
+
+function truncate(str, max) {
+  return str.length > max ? str.slice(0, max) + '...' : str;
+}
+
+// ── Elo table ──
+function renderElo() {
+  const section = document.getElementById('elo-section');
+  const debaters = SUMMARY.models.filter(m => m.elo !== null).sort((a, b) => b.elo - a.elo);
+  if (debaters.length === 0) return;
+
+  let html = '<div class="section-title">Debater Rankings</div>';
+  html += '<table class="elo-table"><thead><tr><th>Model</th><th style="text-align:right">Elo</th><th style="text-align:right">Cost</th></tr></thead><tbody>';
+  for (const m of debaters) {
+    html += `<tr><td class="model-name">${m.model_id}</td><td class="elo-val">${m.elo.toFixed(1)}</td><td class="elo-val">$${m.cost_usd.toFixed(4)}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  section.innerHTML = html;
+}
+
+// ── Cross-table matrices ──
+function buildMatrix() {
+  const topics = [...new Set(SUMMARY.pairs.map(p => p.topic_id))];
+  const section = document.getElementById('matrix-section');
+  let html = '';
+
+  for (const topic of topics) {
+    const pairs = SUMMARY.pairs.filter(p => p.topic_id === topic);
+    const models = getOrderedModels(pairs);
+    const lookup = {};
+    for (const p of pairs) lookup[p.pro_model_id + '|' + p.con_model_id] = p;
+
+    const rowTotals = {};
+    const colTotals = {};
+    for (const m of models) {
+      rowTotals[m] = { pro: 0, con: 0, total: 0 };
+      colTotals[m] = { pro: 0, con: 0, total: 0 };
+    }
+    for (const p of pairs) {
+      rowTotals[p.pro_model_id].pro += p.pro_judges;
+      rowTotals[p.pro_model_id].con += p.con_judges;
+      rowTotals[p.pro_model_id].total += p.pro_judges + p.con_judges;
+      colTotals[p.con_model_id].pro += p.pro_judges;
+      colTotals[p.con_model_id].con += p.con_judges;
+      colTotals[p.con_model_id].total += p.pro_judges + p.con_judges;
+    }
+
+    const isHidden = topics.length > 1 && topic !== activeTopic;
+    html += `<div class="matrix-block" data-topic="${topic}" style="${isHidden ? 'display:none' : ''}">`;
+    html += '<div class="section-title">Cross-Table (Pro &#8595; / Con &#8594;)</div>';
+    html += '<div class="matrix-wrapper"><table class="matrix">';
+
+    html += '<tr><th class="corner"></th>';
+    for (const col of models) html += `<th>${shortName(col)}</th>`;
+    html += '<th class="total-header">Total</th></tr>';
+
+    for (const row of models) {
+      html += `<tr><th class="row-header">${shortName(row)}</th>`;
+      for (const col of models) {
+        const p = lookup[row + '|' + col];
+        if (p) {
+          const isSelf = row === col;
+          const ratio = p.pro_judges + p.con_judges > 0 ? (p.pro_judges - p.con_judges) / (p.pro_judges + p.con_judges) : 0;
+          const cls = isSelf ? 'cell self-debate' : 'cell';
+          html += `<td class="${cls}" style="background:${cellGradient(ratio)}" onclick="selectCell(this, '${p.debate_id}')">${p.pro_judges}/${p.con_judges}</td>`;
+        } else {
+          html += '<td class="cell" style="opacity:0.3">-</td>';
+        }
+      }
+      const rt = rowTotals[row];
+      const rRatio = rt.total > 0 ? (rt.pro - rt.con) / rt.total : 0;
+      html += `<td class="total-cell" style="background:${cellGradient(rRatio)}">${rt.pro}/${rt.con}</td></tr>`;
+    }
+
+    html += '<tr><th class="row-header total-header">Total</th>';
+    for (const col of models) {
+      const ct = colTotals[col];
+      const cRatio = ct.total > 0 ? (ct.pro - ct.con) / ct.total : 0;
+      html += `<td class="total-cell" style="background:${cellGradient(cRatio)}">${ct.pro}/${ct.con}</td>`;
+    }
+    let gP = 0, gC = 0;
+    for (const p of pairs) { gP += p.pro_judges; gC += p.con_judges; }
+    const gR = (gP + gC) > 0 ? (gP - gC) / (gP + gC) : 0;
+    html += `<td class="total-cell" style="background:${cellGradient(gR)}">${gP}/${gC}</td>`;
+    html += '</tr></table></div></div>';
+  }
+
+  section.innerHTML = html;
+}
+
+function getOrderedModels(pairs) {
+  const debaters = SUMMARY.models.filter(m => m.elo !== null).sort((a, b) => b.elo - a.elo);
+  const ordered = debaters.map(m => m.model_id);
+  const allInPairs = new Set();
+  for (const p of pairs) { allInPairs.add(p.pro_model_id); allInPairs.add(p.con_model_id); }
+  for (const m of allInPairs) { if (!ordered.includes(m)) ordered.push(m); }
+  return ordered.filter(m => allInPairs.has(m));
+}
+
+function shortName(id) { return id.replace(/_/g, ' '); }
+
+function cellGradient(ratio) {
+  if (ratio > 0) return `rgba(34,197,94,${Math.min(ratio * 0.5, 0.45).toFixed(2)})`;
+  if (ratio < 0) return `rgba(239,68,68,${Math.min(Math.abs(ratio) * 0.5, 0.45).toFixed(2)})`;
+  return 'transparent';
+}
+
+// ── Cell selection and detail loading ──
+let selectedCell = null;
+
+function selectCell(el, debateId) {
+  if (selectedCell) selectedCell.classList.remove('selected');
+  el.classList.add('selected');
+  selectedCell = el;
+  loadDetail(debateId);
+  if (window.innerWidth <= 900) {
+    document.getElementById('left-panel').classList.add('hidden');
+    document.getElementById('right-panel').classList.add('active');
+  } else {
+    document.getElementById('right-panel').classList.add('active');
+  }
+}
+
+function showList() {
+  document.getElementById('left-panel').classList.remove('hidden');
+  document.getElementById('right-panel').classList.remove('active');
+}
+
+async function loadDetail(debateId) {
+  const content = document.getElementById('detail-content');
+  try {
+    let debate, judgements;
+    if (ALL_DEBATES) {
+      debate = ALL_DEBATES[debateId];
+      judgements = ALL_JUDGEMENTS[debateId] || [];
+      renderDetail(debate, judgements, content);
+    } else {
+      content.innerHTML = '<div class="loading">Loading</div>';
+      const [dr, jr] = await Promise.all([
+        fetch(`/api/debates/${debateId}`),
+        fetch(`/api/judgements/${debateId}`)
+      ]);
+      debate = await dr.json();
+      judgements = await jr.json();
+      renderDetail(debate, judgements, content);
+    }
+  } catch (e) {
+    content.innerHTML = `<div class="detail-placeholder">Failed to load: ${e.message}</div>`;
+  }
+}
+
+function renderDetail(debate, judgements, container) {
+  let html = '<div class="detail-header">';
+  html += `<div class="matchup"><span style="color:var(--pro-color)">PRO: ${debate.pro_model.id}</span> vs <span style="color:var(--con-color)">CON: ${debate.con_model.id}</span> &middot; ${debate.rounds} rounds</div>`;
+
+  if (debate.topic.pro_position) {
+    html += `<details class="position-details"><summary>Pro position</summary><div class="position-text">${escapeHtml(debate.topic.pro_position)}</div></details>`;
+  }
+  if (debate.topic.con_position) {
+    html += `<details class="position-details"><summary>Con position</summary><div class="position-text">${escapeHtml(debate.topic.con_position)}</div></details>`;
+  }
+  html += '</div>';
+
+  html += '<div class="section-title">Judge Verdicts</div>';
+  html += '<div class="judge-cards">';
+  for (const j of judgements) html += renderJudgeCard(j);
+  html += '</div>';
+
+  html += '<div class="transcript"><div class="transcript-title">Debate Transcript</div>';
+  for (const turn of debate.turns) {
+    html += `<div class="turn ${turn.side}">`;
+    html += `<div class="turn-header"><span class="side-badge ${turn.side}">${turn.side}</span><span class="model-label">${turn.speaker_model_id}</span><span class="round-label">Round ${turn.turn_number}</span></div>`;
+    html += `<div class="turn-content">${renderMarkdown(turn.content)}</div></div>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+function renderJudgeCard(j) {
+  const parsed = j.parsed || {};
+  const winner = parsed.winner || 'unknown';
+  const vc = winner === 'pro' ? 'pro' : winner === 'con' ? 'con' : 'tie';
+  let html = `<div class="judge-card"><div class="judge-name">${j.judge_model_id}</div>`;
+  html += `<span class="verdict ${vc}">${winner}</span>`;
+  if (parsed.confidence !== undefined) {
+    const pct = parsed.confidence > 1 ? parsed.confidence : parsed.confidence * 100;
+    html += ` <span class="confidence">${pct.toFixed(0)}% confidence</span>`;
+  }
+  if (parsed.pro_score !== undefined && parsed.con_score !== undefined) {
+    html += `<div class="scores">Pro: ${parsed.pro_score} &middot; Con: ${parsed.con_score}</div>`;
+  }
+  if (parsed.summary) html += `<div class="summary-text">${escapeHtml(parsed.summary)}</div>`;
+  if (parsed.rubric) {
+    html += '<table class="rubric-table"><thead><tr><th>Category</th><th>Pro</th><th>Con</th></tr></thead><tbody>';
+    for (const [cat, scores] of Object.entries(parsed.rubric)) {
+      html += `<tr><th>${cat.replace(/_/g, ' ')}</th><td class="pro-score">${scores.pro}</td><td class="con-score">${scores.con}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+  if (parsed.decisive_reasons && parsed.decisive_reasons.length > 0) {
+    html += '<ul class="reasons">';
+    for (const r of parsed.decisive_reasons) html += `<li>${escapeHtml(r)}</li>`;
+    html += '</ul>';
+  }
+  html += '</div>';
+  return html;
+}
+
+// ── Text utilities ──
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderMarkdown(str) {
+  if (!str) return '';
+  const escaped = escapeHtml(str);
+  const lines = escaped.split('\n');
+  let html = '', inList = false, listType = '';
+
+  for (const line of lines) {
+    if (/^---+$/.test(line.trim())) {
+      if (inList) { html += `</${listType}>`; inList = false; }
+      html += '<hr>'; continue;
+    }
+    const hMatch = line.match(/^(#{1,4})\s+(.+)/);
+    if (hMatch) {
+      if (inList) { html += `</${listType}>`; inList = false; }
+      html += `<h${hMatch[1].length}>${inlineMd(hMatch[2])}</h${hMatch[1].length}>`; continue;
+    }
+    const ulMatch = line.match(/^(\s*)[-*]\s+(.+)/);
+    if (ulMatch) {
+      if (!inList || listType !== 'ul') { if (inList) html += `</${listType}>`; html += '<ul>'; inList = true; listType = 'ul'; }
+      html += `<li>${inlineMd(ulMatch[2])}</li>`; continue;
+    }
+    const olMatch = line.match(/^(\s*)\d+\.\s+(.+)/);
+    if (olMatch) {
+      if (!inList || listType !== 'ol') { if (inList) html += `</${listType}>`; html += '<ol>'; inList = true; listType = 'ol'; }
+      html += `<li>${inlineMd(olMatch[2])}</li>`; continue;
+    }
+    if (inList && line.trim() === '') { html += `</${listType}>`; inList = false; continue; }
+    if (inList) { html += `</${listType}>`; inList = false; }
+    if (line.trim() === '') continue;
+    html += `<p>${inlineMd(line)}</p>`;
+  }
+  if (inList) html += `</${listType}>`;
+  return html;
+}
+
+function inlineMd(text) {
+  return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+}
+
+// ── Init ──
+renderStats();
+renderMotionBar();
+renderElo();
+buildMatrix();
+if (window.innerWidth > 900) document.getElementById('right-panel').classList.add('active');
+</script>
+</body>
+</html>

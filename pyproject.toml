@@ -5,8 +5,11 @@ description = "Top Debate Engine Championship"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
+    "fastapi>=0.115",
+    "jinja2>=3.1",
     "litellm>=1.0",
     "pyyaml>=6.0",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
