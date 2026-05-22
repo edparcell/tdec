@@ -58,6 +58,42 @@ judges:
     assert config.judging.parse_retries == 3
 
 
+def test_load_tournament_config_allows_null_temperature(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+run:
+  name: test
+  rounds: 1
+  output_dir: runs
+topics:
+  - id: topic
+    motion: Motion
+    pro_position: Pro
+    con_position: Con
+debaters:
+  - id: debater
+    provider: openrouter
+    model: openai/gpt-5-nano
+    api_key_env: OPENROUTER_API_KEY
+    temperature: null
+judges:
+  - id: judge
+    provider: openrouter
+    model: anthropic/claude-sonnet-4.6
+    api_key_env: OPENROUTER_API_KEY
+    temperature: null
+""",
+        encoding="utf-8",
+    )
+
+    config = load_tournament_config(config_path)
+
+    assert config.debaters[0].temperature is None
+    assert config.judges[0].temperature is None
+
+
 def test_load_tournament_config_raises_for_missing_api_key_env(
     tmp_path: Path,
     monkeypatch,

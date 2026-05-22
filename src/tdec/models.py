@@ -19,14 +19,16 @@ class ChatModel(Protocol):
 class LiteLLMClient:
     def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
         started = perf_counter()
-        response = litellm.completion(
-            model=model.litellm_model_id,
-            messages=messages,
-            api_base=model.api_base,
-            api_key=model.api_key,
-            temperature=model.temperature,
-            max_tokens=model.max_tokens,
-        )
+        kwargs = {
+            "model": model.litellm_model_id,
+            "messages": messages,
+            "api_base": model.api_base,
+            "api_key": model.api_key,
+            "max_tokens": model.max_tokens,
+        }
+        if model.temperature is not None:
+            kwargs["temperature"] = model.temperature
+        response = litellm.completion(**kwargs)
         latency_seconds = perf_counter() - started
         content: Any = response.choices[0].message.content
         cost_usd, cost_error = _extract_cost_info(response, model)

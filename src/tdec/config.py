@@ -17,7 +17,7 @@ class ModelConfig:
     model: str
     api_base: str | None = None
     api_key: str | None = None
-    temperature: float = 0.2
+    temperature: float | None = 0.2
     max_tokens: int = 4096
 
     @property
@@ -85,13 +85,14 @@ def _model_config(data: dict[str, Any]) -> ModelConfig:
         if not api_key:
             raise ValueError(f"Required API key environment variable is not set: {api_key_env}")
 
+    temperature = data.get("temperature", 0.2)
     return ModelConfig(
         id=str(data["id"]),
         provider=str(data["provider"]),
         model=str(data["model"]),
         api_base=data.get("api_base"),
         api_key=api_key,
-        temperature=float(data.get("temperature", 0.2)),
+        temperature=None if temperature is None else float(temperature),
         max_tokens=int(data.get("max_tokens", 4096)),
     )
 
