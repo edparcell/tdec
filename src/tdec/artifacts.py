@@ -38,6 +38,55 @@ def write_summary(run_dir: Path, summary: dict) -> None:
     if summary["cost_errors"]:
         lines.append(f"- Cost errors: {len(summary['cost_errors'])}")
     lines.append("")
+
+    lines.append("## Motions")
+    lines.append("")
+    lines.append("| Motion | Pro judges | Con judges | Ties | Result |")
+    lines.append("| --- | ---: | ---: | ---: | --- |")
+    for motion in summary["motions"]:
+        lines.append(
+            f"| `{motion['topic_id']}` | {motion['pro_judges']} | {motion['con_judges']} | "
+            f"{motion['tie_judges']} | {motion['result']} |"
+        )
+    lines.append("")
+
+    lines.append("## Debater Elo")
+    lines.append("")
+    lines.append("| Model | Elo |")
+    lines.append("| --- | ---: |")
+    for model in sorted(
+        (m for m in summary["models"] if "debater" in m["roles"]),
+        key=lambda row: row["elo"] or 0,
+        reverse=True,
+    ):
+        elo = "n/a" if model["elo"] is None else f"{model['elo']:.1f}"
+        lines.append(f"| `{model['model_id']}` | {elo} |")
+    lines.append("")
+
+    lines.append("## Model Timings And Costs")
+    lines.append("")
+    lines.append("| Model | Roles | Calls | Latency | Cost | Prompt | Completion | Total tokens |")
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+    for model in summary["models"]:
+        lines.append(
+            f"| `{model['model_id']}` | {', '.join(model['roles'])} | {model['calls']} | "
+            f"{model['latency_seconds']:.2f}s | {_format_cost(model['cost_usd'])} | "
+            f"{model['prompt_tokens']} | {model['completion_tokens']} | {model['total_tokens']} |"
+        )
+    lines.append("")
+
+    lines.append("## Debate Pair Results")
+    lines.append("")
+    lines.append("| Debate | Pro model | Con model | Pro judges | Con judges | Ties | Parse errors |")
+    lines.append("| --- | --- | --- | ---: | ---: | ---: | ---: |")
+    for pair in summary["pairs"]:
+        lines.append(
+            f"| `{pair['debate_id']}` | `{pair['pro_model_id']}` | `{pair['con_model_id']}` | "
+            f"{pair['pro_judges']} | {pair['con_judges']} | {pair['tie_judges']} | "
+            f"{pair['parse_errors']} |"
+        )
+    lines.append("")
+
     for debate in summary["debates"]:
         lines.append(f"## {debate['debate_id']}")
         lines.append("")

@@ -12,6 +12,9 @@ from tdec.debate_types import DebateTranscript, Judgement
 from tdec.judging import judge_debate
 from tdec.models import ChatModel
 
+ELO_K = 32
+STARTING_ELO = 1500.0
+
 
 class TournamentResult(TypedDict):
     run_dir: str
@@ -80,6 +83,9 @@ def summarize(
             "judging_cost_usd": _sum_judgement_cost(debate_judgements),
             "cost_errors": _cost_errors(debate, debate_judgements),
         })
+    model_summaries = _model_summaries(debates, judgements)
+    pair_summaries = _pair_summaries(debate_summaries)
+    motion_summaries = _motion_summaries(debate_summaries)
     return {
         "run_dir": str(run_dir),
         "total_cost_usd": _sum_optional_costs(
@@ -95,12 +101,140 @@ def summarize(
             debate["debate_latency_seconds"] + debate["judging_latency_seconds"]
             for debate in debate_summaries
         ),
+        "models": model_summaries,
+        "pairs": pair_summaries,
+        "motions": motion_summaries,
         "debates": debate_summaries,
     }
 
 
 def _count_winners(judgements: list[Judgement], winner: str) -> int:
     return sum(1 for judgement in judgements if judgement.parsed.get("winner") == winner)
+
+
+def _model_summaries(debates: list[DebateTranscript], judgements: list[Judgement]) -> list[dict]:
+    totals: dict[str, dict] = {}
+    for debate in debates:
+        for turn in debate.turns:
+            if turn.metrics is not None:
+                _add_metric(totals, turn.speaker_model_id, "debater", turn.metrics)
+    for judgement in judgements:
+        if judgement.metrics is not None:
+            _add_metric(totals, judgement.judge_model_id, "judge", judgement.metrics)
+
+    elos = _elo_ratings(debates, judgements)
+    rows = []
+    for model_id, data in sorted(totals.items()):
+        rows.append({
+            "model_id": model_id,
+            "roles": sorted(data["roles"]),
+            "calls": data["calls"],
+            "latency_seconds": data["latency_seconds"],
+            "cost_usd": data["cost_usd"] if data["unknown_costs"] == 0 else None,
+            "unknown_costs": data["unknown_costs"],
+            "prompt_tokens": data["prompt_tokens"],
+            "completion_tokens": data["completion_tokens"],
+            "total_tokens": data["total_tokens"],
+            "elo": elos.get(model_id),
+        })
+    return rows
+
+
+def _add_metric(totals: dict[str, dict], model_id: str, role: str, metrics) -> None:
+    data = totals.setdefault(
+        model_id,
+        {
+            "roles": set(),
+            "calls": 0,
+            "latency_seconds": 0.0,
+            "cost_usd": 0.0,
+            "unknown_costs": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        },
+    )
+    data["roles"].add(role)
+    data["calls"] += 1
+    data["latency_seconds"] += metrics.latency_seconds
+    if metrics.cost_usd is None:
+        data["unknown_costs"] += 1
+    else:
+        data["cost_usd"] += metrics.cost_usd
+    data["prompt_tokens"] += metrics.usage.prompt_tokens or 0
+    data["completion_tokens"] += metrics.usage.completion_tokens or 0
+    data["total_tokens"] += metrics.usage.total_tokens or 0
+
+
+def _pair_summaries(debate_summaries: list[dict]) -> list[dict]:
+    rows = []
+    for debate in debate_summaries:
+        rows.append({
+            "debate_id": debate["debate_id"],
+            "topic_id": debate["topic_id"],
+            "pro_model_id": debate["pro_model_id"],
+            "con_model_id": debate["con_model_id"],
+            "pro_judges": debate["pro_wins"],
+            "con_judges": debate["con_wins"],
+            "tie_judges": debate["ties"],
+            "parse_errors": debate["parse_errors"],
+        })
+    return rows
+
+
+def _motion_summaries(debate_summaries: list[dict]) -> list[dict]:
+    by_topic: dict[str, dict] = {}
+    for debate in debate_summaries:
+        data = by_topic.setdefault(
+            debate["topic_id"],
+            {"topic_id": debate["topic_id"], "pro_judges": 0, "con_judges": 0, "tie_judges": 0},
+        )
+        data["pro_judges"] += debate["pro_wins"]
+        data["con_judges"] += debate["con_wins"]
+        data["tie_judges"] += debate["ties"]
+
+    rows = []
+    for data in by_topic.values():
+        if data["pro_judges"] > data["con_judges"]:
+            result = "carried"
+        elif data["con_judges"] > data["pro_judges"]:
+            result = "defeated"
+        else:
+            result = "tied"
+        rows.append({**data, "result": result})
+    return sorted(rows, key=lambda row: row["topic_id"])
+
+
+def _elo_ratings(debates: list[DebateTranscript], judgements: list[Judgement]) -> dict[str, float]:
+    ratings: dict[str, float] = {}
+    debate_by_id = {debate.id: debate for debate in debates}
+    for judgement in judgements:
+        winner = judgement.parsed.get("winner")
+        if winner in {"parse_error", None}:
+            continue
+        debate = debate_by_id[judgement.debate_id]
+        pro_id = debate.pro_model.id
+        con_id = debate.con_model.id
+        ratings.setdefault(pro_id, STARTING_ELO)
+        ratings.setdefault(con_id, STARTING_ELO)
+        score_pro = _pro_score_for_winner(winner)
+        expected_pro = _expected_score(ratings[pro_id], ratings[con_id])
+        expected_con = 1 - expected_pro
+        ratings[pro_id] += ELO_K * (score_pro - expected_pro)
+        ratings[con_id] += ELO_K * ((1 - score_pro) - expected_con)
+    return {model_id: round(rating, 1) for model_id, rating in ratings.items()}
+
+
+def _pro_score_for_winner(winner: str) -> float:
+    if winner == "pro":
+        return 1.0
+    if winner == "con":
+        return 0.0
+    return 0.5
+
+
+def _expected_score(rating_a: float, rating_b: float) -> float:
+    return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
 
 
 def _sum_debate_latency(debate: DebateTranscript) -> float:

@@ -8,11 +8,18 @@ from tdec.tournament import run_tournament
 class StubClient:
     def __init__(self) -> None:
         self.calls = 0
+        self.judge_calls = 0
 
     def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
         self.calls += 1
         if model.id.startswith("judge"):
-            return self._result(model, '{"winner": "pro", "winner_label": "A", "confidence": 0.7}')
+            self.judge_calls += 1
+            winner = "pro" if self.judge_calls <= 6 else "con"
+            winner_label = "A" if winner == "pro" else "B"
+            return self._result(
+                model,
+                f'{{"winner": "{winner}", "winner_label": "{winner_label}", "confidence": 0.7}}',
+            )
         return self._result(model, f"{model.id} debate response")
 
     def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
@@ -75,6 +82,35 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
     assert len(summary["debates"]) == 6
     assert summary["total_cost_usd"] == 0.24
     assert summary["total_latency_seconds"] == 24.0
+    assert summary["motions"] == [
+        {
+            "topic_id": "topic",
+            "pro_judges": 6,
+            "con_judges": 6,
+            "tie_judges": 0,
+            "result": "tied",
+        },
+    ]
+    assert len(summary["pairs"]) == 6
+    assert summary["pairs"][0]["pro_judges"] == 2
+    assert summary["pairs"][0]["con_judges"] == 0
+    assert summary["pairs"][-1]["pro_judges"] == 0
+    assert summary["pairs"][-1]["con_judges"] == 2
+    assert {model["model_id"] for model in summary["models"]} == {"a", "b", "c", "judge_1", "judge_2"}
+    assert {model["model_id"]: model["calls"] for model in summary["models"]} == {
+        "a": 4,
+        "b": 4,
+        "c": 4,
+        "judge_1": 6,
+        "judge_2": 6,
+    }
+    debater_elos = {
+        model["model_id"]: model["elo"]
+        for model in summary["models"]
+        if "debater" in model["roles"]
+    }
+    assert set(debater_elos) == {"a", "b", "c"}
+    assert debater_elos["a"] > debater_elos["b"] > debater_elos["c"]
     assert all(debate["judgement_count"] == 2 for debate in summary["debates"])
     assert all(debate["parse_errors"] == 0 for debate in summary["debates"])
     assert all(debate["debate_cost_usd"] == 0.02 for debate in summary["debates"])
