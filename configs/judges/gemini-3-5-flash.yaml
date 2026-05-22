@@ -1,0 +1,6 @@
+id: gemini_3_5_flash
+provider: openrouter
+model: google/gemini-3.5-flash
+api_key_env: OPENROUTER_API_KEY
+temperature: 0.2
+max_tokens: 10000

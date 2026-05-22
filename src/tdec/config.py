@@ -175,8 +175,16 @@ def load_prompt_set_config(path: str | Path) -> PromptSetConfig:
 def load_judge_config(path: str | Path) -> JudgeRunConfig:
     config_path = Path(path)
     data = _load_yaml(config_path)
+    judges_dir = config_path.parent / "judges"
+    judge_entries = _required_list(data, "judges")
+    judges = [
+        load_judge_model_config(judges_dir / f"{entry}.yaml")
+        if isinstance(entry, str)
+        else _judge_model_config_inline(entry)
+        for entry in judge_entries
+    ]
     return JudgeRunConfig(
-        judges=[_judge_model_config_inline(item) for item in _required_list(data, "judges")],
+        judges=judges,
         judging=_judging_config(data.get("judging", {})),
     )
 

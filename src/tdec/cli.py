@@ -115,7 +115,7 @@ def judge(
     """Add judges to an existing tournament run."""
     if not (run_dir / "summary.json").exists():
         raise click.ClickException(f"No summary.json found in {run_dir}")
-    load_env_file(judge_config_path.parent.parent / ".env")
+    load_env_file(judge_config_path.parent / ".env")
     load_env_file(".env")
     if prompt_set_path is None:
         prompt_set_path = Path("configs/prompt-sets/default.yaml")
