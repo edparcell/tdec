@@ -10,6 +10,7 @@ from tdec.config import load_tournament_config
 from tdec.env import load_env_file
 from tdec.models import LiteLLMClient
 from tdec.tournament import run_tournament
+from tdec.viewer import export_html, serve as serve_viewer
 
 
 @click.group()
@@ -56,6 +57,37 @@ def run(
         workers=workers,
     )
     click.echo(f"Wrote run to {result['run_dir']}")
+
+
+@main.command()
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--port", type=int, default=None, help="Port to serve on (default: auto).")
+def view(run_dir: Path, port: int | None) -> None:
+    """View a tournament run in the browser."""
+    summary_path = run_dir / "summary.json"
+    if not summary_path.exists():
+        raise click.ClickException(f"No summary.json found in {run_dir}")
+    serve_viewer(run_dir, port=port)
+
+
+@main.command("export")
+@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Output HTML file path (default: <run_dir>/report.html).",
+)
+def export_cmd(run_dir: Path, output: Path | None) -> None:
+    """Export a standalone HTML viewer for a tournament run."""
+    summary_path = run_dir / "summary.json"
+    if not summary_path.exists():
+        raise click.ClickException(f"No summary.json found in {run_dir}")
+    if output is None:
+        output = run_dir / "report.html"
+    export_html(run_dir, output)
+    click.echo(f"Wrote {output} ({output.stat().st_size / 1024:.0f} KB)")
 
 
 if __name__ == "__main__":
