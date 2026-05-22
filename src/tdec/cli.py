@@ -72,12 +72,13 @@ def run(
 @main.command()
 @click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--port", type=int, default=None, help="Port to serve on (default: auto).")
-def view(run_dir: Path, port: int | None) -> None:
+@click.option("--no-open", is_flag=True, default=False, help="Don't auto-open the browser.")
+def view(run_dir: Path, port: int | None, no_open: bool) -> None:
     """View a tournament run in the browser."""
     summary_path = run_dir / "summary.json"
     if not summary_path.exists():
         raise click.ClickException(f"No summary.json found in {run_dir}")
-    serve_viewer(run_dir, port=port)
+    serve_viewer(run_dir, port=port, open_browser=not no_open)
 
 
 @main.command()

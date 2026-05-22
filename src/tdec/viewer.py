@@ -76,7 +76,7 @@ def _jinja_env() -> jinja2.Environment:
 # ── Server mode ──
 
 
-def serve(run_dir: Path, port: int | None = None) -> None:
+def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) -> None:
     import uvicorn
 
     if port is None:
@@ -129,7 +129,8 @@ def serve(run_dir: Path, port: int | None = None) -> None:
     url = f"http://127.0.0.1:{port}"
     print(f"Serving {run_dir.name} at {url}")
     print("Press Ctrl+C to stop.")
-    webbrowser.open(url)
+    if open_browser:
+        webbrowser.open(url)
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
 
 
