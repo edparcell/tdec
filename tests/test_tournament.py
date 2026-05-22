@@ -1,7 +1,9 @@
 from pathlib import Path
+import json
 
 from tdec.config import JudgingConfig, ModelConfig, RunConfig, TopicConfig, TournamentConfig
 from tdec.debate_types import ModelCallMetrics, ModelCallResult, TokenUsage
+from tdec.models import ModelCallError
 from tdec.tournament import run_tournament
 
 
@@ -53,6 +55,62 @@ class UnknownCostClient(StubClient):
         )
 
 
+class FailingDebateClient(StubClient):
+    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
+        raise ModelCallError(model, RuntimeError("provider unavailable api_key=sk-secret123456"))
+
+
+class FailingJudgeClient(StubClient):
+    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
+        if model.id.startswith("judge"):
+            raise ModelCallError(model, RuntimeError("provider unavailable"))
+        return super().call(model, messages)
+
+
+class MetadataClient(StubClient):
+    def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
+        result = super()._result(model, content)
+        return ModelCallResult(
+            content=content,
+            metrics=ModelCallMetrics(
+                model_id=result.metrics.model_id,
+                provider=result.metrics.provider,
+                model=result.metrics.model,
+                latency_seconds=result.metrics.latency_seconds,
+                usage=result.metrics.usage,
+                cost_usd=result.metrics.cost_usd,
+                response_metadata={
+                    "id": "response-id",
+                    "model": model.model,
+                    "provider": model.provider,
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "index": 0,
+                            "message": {
+                                "content": content,
+                                "role": "assistant",
+                                "reasoning_content": "one kept reasoning copy",
+                                "provider_specific_fields": {
+                                    "reasoning": "duplicate reasoning",
+                                    "reasoning_content": "duplicate reasoning",
+                                    "reasoning_details": [
+                                        {"type": "reasoning.encrypted", "data": "encrypted"}
+                                    ],
+                                },
+                            },
+                        }
+                    ],
+                },
+            ),
+        )
+
+
+class BlankMetadataClient(MetadataClient):
+    def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
+        return super()._result(model, "")
+
+
 def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) -> None:
     config = TournamentConfig(
         run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
@@ -81,6 +139,7 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
 
     assert len(summary["debates"]) == 6
     assert summary["total_cost_usd"] == 0.24
+    assert summary["errors"] == []
     assert summary["total_latency_seconds"] == 24.0
     assert summary["motions"] == [
         {
@@ -139,3 +198,99 @@ def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
 
     assert summary["total_cost_usd"] is None
     assert summary["cost_errors"]
+
+
+def test_run_tournament_skips_failed_debates_and_logs_errors(tmp_path: Path) -> None:
+    config = TournamentConfig(
+        run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
+        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+        debaters=[
+            ModelConfig(id="a", provider="test", model="a"),
+            ModelConfig(id="b", provider="test", model="b"),
+        ],
+        judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
+        judging=JudgingConfig(),
+    )
+
+    summary = run_tournament(config=config, client=FailingDebateClient())
+    run_dir = Path(summary["run_dir"])
+
+    assert summary["debates"] == []
+    assert len(summary["errors"]) == 2
+    assert len(list((run_dir / "debates").glob("*.json"))) == 0
+    assert len(list((run_dir / "judgements").glob("*.json"))) == 0
+    assert len(list((run_dir / "errors").glob("*.json"))) == 2
+    assert (run_dir / "errors" / "errors.jsonl").is_file()
+    assert summary["errors"][0]["error_message"] == "provider unavailable api_key=<redacted>"
+
+
+def test_run_tournament_skips_failed_judgements_and_logs_errors(tmp_path: Path) -> None:
+    config = TournamentConfig(
+        run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
+        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+        debaters=[
+            ModelConfig(id="a", provider="test", model="a"),
+            ModelConfig(id="b", provider="test", model="b"),
+        ],
+        judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
+        judging=JudgingConfig(),
+    )
+
+    summary = run_tournament(config=config, client=FailingJudgeClient())
+    run_dir = Path(summary["run_dir"])
+
+    assert len(summary["debates"]) == 2
+    assert len(summary["errors"]) == 2
+    assert all(debate["judgement_count"] == 0 for debate in summary["debates"])
+    assert len(list((run_dir / "debates").glob("*.json"))) == 2
+    assert len(list((run_dir / "judgements").glob("*.json"))) == 0
+    assert len(list((run_dir / "errors").glob("*.json"))) == 2
+
+
+def test_default_artifacts_compact_duplicate_response_metadata(tmp_path: Path) -> None:
+    config = TournamentConfig(
+        run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
+        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+        debaters=[
+            ModelConfig(id="a", provider="test", model="a"),
+            ModelConfig(id="b", provider="test", model="b"),
+        ],
+        judges=[],
+        judging=JudgingConfig(),
+    )
+
+    summary = run_tournament(config=config, client=MetadataClient())
+    run_dir = Path(summary["run_dir"])
+    debate_path = next((run_dir / "debates").glob("*.json"))
+    data = json.loads(debate_path.read_text(encoding="utf-8"))
+    turn = data["turns"][0]
+    message = turn["metrics"]["response_metadata"]["choices"][0]["message"]
+
+    assert turn["content"]
+    assert message == {
+        "role": "assistant",
+        "reasoning_content": "one kept reasoning copy",
+    }
+
+
+def test_blank_content_preserves_full_response_metadata_by_default(tmp_path: Path) -> None:
+    config = TournamentConfig(
+        run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
+        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+        debaters=[
+            ModelConfig(id="a", provider="test", model="a"),
+            ModelConfig(id="b", provider="test", model="b"),
+        ],
+        judges=[],
+        judging=JudgingConfig(),
+    )
+
+    summary = run_tournament(config=config, client=BlankMetadataClient())
+    run_dir = Path(summary["run_dir"])
+    debate_path = next((run_dir / "debates").glob("*.json"))
+    data = json.loads(debate_path.read_text(encoding="utf-8"))
+    message = data["turns"][0]["metrics"]["response_metadata"]["choices"][0]["message"]
+
+    assert data["turns"][0]["content"] == ""
+    assert message["content"] == ""
+    assert message["provider_specific_fields"]["reasoning_details"][0]["data"] == "encrypted"

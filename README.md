@@ -31,6 +31,13 @@ Then run the cheap OpenRouter smoke tournament:
 uv run tdec run configs/openrouter-cheap.yaml
 ```
 
+Artifacts are compact by default. To preserve full raw LiteLLM/OpenRouter
+response metadata for every call:
+
+```powershell
+uv run tdec run configs/openrouter-cheap.yaml --artifact-verbosity full
+```
+
 ## Configuration
 
 `configs/tournament.yaml` contains the default shape:
@@ -65,7 +72,12 @@ api_base: http://localhost:11434
 
 Each run writes:
 
-- `debates/*.json` - full transcript and metadata.
-- `judgements/*.json` - each judge result for each debate.
+- `debates/*.json` - transcript and model call metadata.
+- `judgements/*.json` - each judge result for each completed debate.
+- `errors/*.json` and `errors/errors.jsonl` - skipped provider call failures.
 - `summary.json` - aggregate machine-readable summary.
 - `summary.md` - compact human-readable summary.
+
+By default, response metadata is compacted to avoid duplicating visible content
+and repeated reasoning fields. Blank model outputs keep the full raw metadata
+automatically so they can be debugged after the run.

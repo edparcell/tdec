@@ -17,6 +17,15 @@ class ChatModel(Protocol):
         """Return a model response for a chat message list."""
 
 
+class ModelCallError(RuntimeError):
+    def __init__(self, model: ModelConfig, cause: Exception) -> None:
+        self.model_id = model.id
+        self.provider = model.provider
+        self.model = model.model
+        self.cause = cause
+        super().__init__(f"{model.id} ({model.provider}/{model.model}) call failed: {cause}")
+
+
 class LiteLLMClient:
     def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
         started = perf_counter()
@@ -30,7 +39,10 @@ class LiteLLMClient:
         }
         if model.temperature is not None:
             kwargs["temperature"] = model.temperature
-        response = litellm.completion(**kwargs)
+        try:
+            response = litellm.completion(**kwargs)
+        except Exception as e:
+            raise ModelCallError(model, e) from e
         latency_seconds = perf_counter() - started
         content: Any = response.choices[0].message.content
         cost_usd, cost_error = _extract_cost_info(response, model)

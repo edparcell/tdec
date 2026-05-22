@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+import traceback
 from typing import TypedDict
 
-from tdec.artifacts import make_run_dir, write_debate, write_judgement, write_summary
+from tdec.artifacts import (
+    ArtifactVerbosity,
+    make_run_dir,
+    write_debate,
+    write_error,
+    write_judgement,
+    write_summary,
+)
 from tdec.config import TournamentConfig
 from tdec.debate import debate_pairings, run_debate
-from tdec.debate_types import DebateTranscript, Judgement
+from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 from tdec.judging import judge_debate
-from tdec.models import ChatModel
+from tdec.models import ChatModel, ModelCallError
 
 ELO_K = 32
 STARTING_ELO = 1500.0
@@ -26,35 +35,66 @@ def run_tournament(
     config: TournamentConfig,
     client: ChatModel,
     output_dir: Path | None = None,
+    artifact_verbosity: ArtifactVerbosity = "compact",
 ) -> TournamentResult:
     base_output_dir = output_dir or config.run.output_dir
     run_dir = make_run_dir(base_output_dir, config.run.name)
     debates: list[DebateTranscript] = []
     judgements: list[Judgement] = []
+    errors: list[TournamentError] = []
 
     for topic in config.topics:
         for pro_model, con_model in debate_pairings(config.debaters):
-            transcript = run_debate(
-                client=client,
-                topic=topic,
-                pro_model=pro_model,
-                con_model=con_model,
-                rounds=config.run.rounds,
-            )
+            debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
+            try:
+                transcript = run_debate(
+                    client=client,
+                    topic=topic,
+                    pro_model=pro_model,
+                    con_model=con_model,
+                    rounds=config.run.rounds,
+                )
+            except ModelCallError as e:
+                error = _tournament_error(
+                    stage="debate",
+                    topic_id=topic.id,
+                    debate_id=debate_id,
+                    pro_model_id=pro_model.id,
+                    con_model_id=con_model.id,
+                    judge_model_id=None,
+                    exc=e,
+                )
+                errors.append(error)
+                write_error(run_dir, error, len(errors))
+                continue
             debates.append(transcript)
-            write_debate(run_dir, transcript)
+            write_debate(run_dir, transcript, artifact_verbosity=artifact_verbosity)
 
             for judge_model in config.judges:
-                judgement = judge_debate(
-                    client=client,
-                    transcript=transcript,
-                    judge_model=judge_model,
-                    judging_config=config.judging,
-                )
+                try:
+                    judgement = judge_debate(
+                        client=client,
+                        transcript=transcript,
+                        judge_model=judge_model,
+                        judging_config=config.judging,
+                    )
+                except ModelCallError as e:
+                    error = _tournament_error(
+                        stage="judgement",
+                        topic_id=topic.id,
+                        debate_id=transcript.id,
+                        pro_model_id=pro_model.id,
+                        con_model_id=con_model.id,
+                        judge_model_id=judge_model.id,
+                        exc=e,
+                    )
+                    errors.append(error)
+                    write_error(run_dir, error, len(errors))
+                    continue
                 judgements.append(judgement)
-                write_judgement(run_dir, judgement)
+                write_judgement(run_dir, judgement, artifact_verbosity=artifact_verbosity)
 
-    summary = summarize(run_dir, debates, judgements)
+    summary = summarize(run_dir, debates, judgements, errors)
     write_summary(run_dir, summary)
     return summary
 
@@ -63,7 +103,9 @@ def summarize(
     run_dir: Path,
     debates: list[DebateTranscript],
     judgements: list[Judgement],
+    errors: list[TournamentError] | None = None,
 ) -> TournamentResult:
+    errors = errors or []
     debate_summaries = []
     for debate in debates:
         debate_judgements = [j for j in judgements if j.debate_id == debate.id]
@@ -97,6 +139,7 @@ def summarize(
         "cost_errors": [
             error for debate in debate_summaries for error in debate["cost_errors"]
         ],
+        "errors": [error.to_dict() for error in errors],
         "total_latency_seconds": sum(
             debate["debate_latency_seconds"] + debate["judging_latency_seconds"]
             for debate in debate_summaries
@@ -106,6 +149,46 @@ def summarize(
         "motions": motion_summaries,
         "debates": debate_summaries,
     }
+
+
+def _tournament_error(
+    *,
+    stage: str,
+    topic_id: str,
+    debate_id: str,
+    pro_model_id: str,
+    con_model_id: str,
+    judge_model_id: str | None,
+    exc: ModelCallError,
+) -> TournamentError:
+    return TournamentError(
+        stage=stage,
+        topic_id=topic_id,
+        debate_id=debate_id,
+        pro_model_id=pro_model_id,
+        con_model_id=con_model_id,
+        judge_model_id=judge_model_id,
+        model_id=exc.model_id,
+        error_type=type(exc.cause).__name__,
+        error_message=_redact_error_text(str(exc.cause)),
+        traceback=_redact_error_text("".join(traceback.format_exception(exc.cause))),
+    )
+
+
+def _redact_error_text(text: str) -> str:
+    redacted = re.sub(r"\b(sk-[A-Za-z0-9_-]{8,})\b", "sk-<redacted>", text)
+    redacted = re.sub(r"\b(gh[opsu]_[A-Za-z0-9_]{8,})\b", "gh-<redacted>", redacted)
+    redacted = re.sub(
+        r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}",
+        r"\1<redacted>",
+        redacted,
+    )
+    redacted = re.sub(
+        r"(?i)((?:api[_-]?key|authorization|token)\s*[=:]\s*)[^\s,;]+",
+        r"\1<redacted>",
+        redacted,
+    )
+    return redacted
 
 
 def _count_winners(judgements: list[Judgement], winner: str) -> int:

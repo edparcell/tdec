@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Literal
 
-from tdec.debate_types import DebateTranscript, Judgement
+from tdec.debate_types import DebateTranscript, Judgement, TournamentError
+
+ArtifactVerbosity = Literal["compact", "full"]
 
 
 def make_run_dir(output_dir: Path, run_name: str) -> Path:
@@ -15,18 +19,38 @@ def make_run_dir(output_dir: Path, run_name: str) -> Path:
     run_dir = output_dir / f"{timestamp}__{run_name}"
     (run_dir / "debates").mkdir(parents=True)
     (run_dir / "judgements").mkdir(parents=True)
+    (run_dir / "errors").mkdir(parents=True)
     return run_dir
 
 
-def write_debate(run_dir: Path, transcript: DebateTranscript) -> Path:
+def write_debate(
+    run_dir: Path,
+    transcript: DebateTranscript,
+    *,
+    artifact_verbosity: ArtifactVerbosity = "compact",
+) -> Path:
     path = run_dir / "debates" / f"{transcript.id}.json"
-    write_json(path, transcript.to_dict())
+    write_json(path, _prepare_debate_artifact(transcript.to_dict(), artifact_verbosity))
     return path
 
 
-def write_judgement(run_dir: Path, judgement: Judgement) -> Path:
+def write_judgement(
+    run_dir: Path,
+    judgement: Judgement,
+    *,
+    artifact_verbosity: ArtifactVerbosity = "compact",
+) -> Path:
     path = run_dir / "judgements" / f"{judgement.debate_id}__{judgement.judge_model_id}.json"
-    write_json(path, judgement.to_dict())
+    write_json(path, _prepare_judgement_artifact(judgement.to_dict(), artifact_verbosity))
+    return path
+
+
+def write_error(run_dir: Path, error: TournamentError, index: int) -> Path:
+    path = run_dir / "errors" / f"{index:04d}__{error.stage}__{error.debate_id}.json"
+    data = error.to_dict()
+    write_json(path, data)
+    with (run_dir / "errors" / "errors.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(data, ensure_ascii=False, default=_json_default) + "\n")
     return path
 
 
@@ -37,6 +61,8 @@ def write_summary(run_dir: Path, summary: dict) -> None:
     lines.append(f"- Total latency: {summary['total_latency_seconds']:.2f}s")
     if summary["cost_errors"]:
         lines.append(f"- Cost errors: {len(summary['cost_errors'])}")
+    if summary["errors"]:
+        lines.append(f"- Skipped calls: {len(summary['errors'])}")
     lines.append("")
 
     lines.append("## Motions")
@@ -87,6 +113,18 @@ def write_summary(run_dir: Path, summary: dict) -> None:
         )
     lines.append("")
 
+    if summary["errors"]:
+        lines.append("## Skipped Calls")
+        lines.append("")
+        lines.append("| Stage | Debate | Model | Error |")
+        lines.append("| --- | --- | --- | --- |")
+        for error in summary["errors"]:
+            lines.append(
+                f"| {error['stage']} | `{error['debate_id']}` | `{error['model_id']}` | "
+                f"{error['error_type']}: {_escape_table_text(error['error_message'])} |"
+            )
+        lines.append("")
+
     for debate in summary["debates"]:
         lines.append(f"## {debate['debate_id']}")
         lines.append("")
@@ -106,6 +144,128 @@ def write_summary(run_dir: Path, summary: dict) -> None:
             lines.extend(f"  - {error}" for error in debate["cost_errors"])
         lines.append("")
     (run_dir / "summary.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def _prepare_debate_artifact(data: dict[str, Any], verbosity: ArtifactVerbosity) -> dict[str, Any]:
+    if verbosity == "full":
+        return data
+    compact = deepcopy(data)
+    for turn in compact.get("turns", []):
+        if isinstance(turn, dict) and _has_visible_text(turn.get("content")):
+            _compact_metrics(turn.get("metrics"))
+    return compact
+
+
+def _prepare_judgement_artifact(data: dict[str, Any], verbosity: ArtifactVerbosity) -> dict[str, Any]:
+    if verbosity == "full":
+        return data
+    compact = deepcopy(data)
+    if _has_visible_text(compact.get("raw_text")):
+        _compact_metrics(compact.get("metrics"))
+    for attempt in compact.get("attempts") or []:
+        if isinstance(attempt, dict) and _has_visible_text(attempt.get("raw_text")):
+            _compact_metrics(attempt.get("metrics"))
+    return compact
+
+
+def _has_visible_text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _compact_metrics(metrics: object) -> None:
+    if not isinstance(metrics, dict):
+        return
+    metadata = metrics.get("response_metadata")
+    if isinstance(metadata, dict):
+        metrics["response_metadata"] = _compact_response_metadata(metadata)
+
+
+def _compact_response_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in (
+        "id",
+        "created",
+        "model",
+        "object",
+        "system_fingerprint",
+        "usage",
+        "provider",
+        "service_tier",
+    ):
+        if key in metadata:
+            compact[key] = metadata[key]
+
+    choices = metadata.get("choices")
+    if isinstance(choices, list):
+        compact["choices"] = [_compact_choice(choice) for choice in choices]
+    return compact
+
+
+def _compact_choice(choice: object) -> object:
+    if not isinstance(choice, dict):
+        return choice
+
+    compact: dict[str, Any] = {}
+    for key in ("finish_reason", "index"):
+        if key in choice:
+            compact[key] = choice[key]
+
+    provider_fields = choice.get("provider_specific_fields")
+    if isinstance(provider_fields, dict):
+        kept_provider_fields = {
+            key: provider_fields[key]
+            for key in ("native_finish_reason",)
+            if key in provider_fields
+        }
+        if kept_provider_fields:
+            compact["provider_specific_fields"] = kept_provider_fields
+
+    message = choice.get("message")
+    if isinstance(message, dict):
+        compact["message"] = _compact_message(message)
+    return compact
+
+
+def _compact_message(message: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    if "role" in message:
+        compact["role"] = message["role"]
+    if message.get("refusal") is not None:
+        compact["refusal"] = message["refusal"]
+
+    provider_fields = message.get("provider_specific_fields")
+    if isinstance(provider_fields, dict) and provider_fields.get("refusal") is not None:
+        compact["refusal"] = provider_fields["refusal"]
+
+    reasoning = _first_reasoning_text(message, provider_fields)
+    if reasoning:
+        compact["reasoning_content"] = reasoning
+    return compact
+
+
+def _first_reasoning_text(
+    message: dict[str, Any],
+    provider_fields: object,
+) -> str | None:
+    for value in (
+        message.get("reasoning_content"),
+        provider_fields.get("reasoning_content") if isinstance(provider_fields, dict) else None,
+        provider_fields.get("reasoning") if isinstance(provider_fields, dict) else None,
+    ):
+        if isinstance(value, str) and value.strip():
+            return value
+
+    if isinstance(provider_fields, dict):
+        details = provider_fields.get("reasoning_details")
+        if isinstance(details, list):
+            for detail in details:
+                if not isinstance(detail, dict):
+                    continue
+                for key in ("summary", "text"):
+                    value = detail.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value
+    return None
 
 
 def write_json(path: Path, data: object) -> None:
@@ -128,3 +288,7 @@ def _format_cost(value: float | None) -> str:
     if value is None:
         return "unknown"
     return f"${value:.6f}"
+
+
+def _escape_table_text(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")

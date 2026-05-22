@@ -8,6 +8,7 @@ from typing import Any, Literal
 from tdec.config import ModelConfig, TopicConfig
 
 Side = Literal["pro", "con"]
+TournamentErrorStage = Literal["debate", "judgement"]
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,23 @@ class Judgement:
     parsed: dict[str, Any]
     metrics: ModelCallMetrics | None = None
     attempts: list[JudgeAttempt] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class TournamentError:
+    stage: TournamentErrorStage
+    topic_id: str
+    debate_id: str
+    pro_model_id: str
+    con_model_id: str
+    judge_model_id: str | None
+    model_id: str
+    error_type: str
+    error_message: str
+    traceback: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

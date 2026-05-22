@@ -25,7 +25,14 @@ def main() -> None:
     default=None,
     help="Override output directory from config.",
 )
-def run(config_path: Path, output_dir: Path | None) -> None:
+@click.option(
+    "--artifact-verbosity",
+    type=click.Choice(["compact", "full"]),
+    default="compact",
+    show_default=True,
+    help="Use compact artifacts by default, or full raw model response metadata.",
+)
+def run(config_path: Path, output_dir: Path | None, artifact_verbosity: str) -> None:
     """Run a debate tournament from a YAML config."""
     load_env_file(config_path.parent.parent / ".env")
     load_env_file(".env")
@@ -34,6 +41,7 @@ def run(config_path: Path, output_dir: Path | None) -> None:
         config=config,
         client=LiteLLMClient(),
         output_dir=output_dir,
+        artifact_verbosity=artifact_verbosity,
     )
     click.echo(f"Wrote run to {result['run_dir']}")
 
