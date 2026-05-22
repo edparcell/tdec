@@ -20,7 +20,8 @@ class LiteLLMClient:
     def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
         started = perf_counter()
         kwargs = {
-            "model": model.litellm_model_id,
+            "model": model.model,
+            "custom_llm_provider": model.provider,
             "messages": messages,
             "api_base": model.api_base,
             "api_key": model.api_key,
@@ -71,7 +72,13 @@ def _extract_cost_info(response: Any, model: ModelConfig) -> tuple[float | None,
         return hidden_cost, None
     try:
         return (
-            float(litellm.completion_cost(completion_response=response, model=model.litellm_model_id)),
+            float(
+                litellm.completion_cost(
+                    completion_response=response,
+                    model=model.model,
+                    custom_llm_provider=model.provider,
+                )
+            ),
             None,
         )
     except Exception as e:
