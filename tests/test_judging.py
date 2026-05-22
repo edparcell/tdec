@@ -1,4 +1,4 @@
-from tdec.config import JudgingConfig, ModelConfig, TopicConfig
+from tdec.config import DebaterConfig, JudgeModelConfig, JudgingConfig, TopicConfig
 from tdec.debate_types import (
     DebateTranscript,
     ModelCallMetrics,
@@ -6,6 +6,7 @@ from tdec.debate_types import (
     TokenUsage,
 )
 from tdec.judging import judge_debate, parse_json_response
+from tdec.prompts import default_prompt_set
 
 
 def test_parse_json_response_accepts_plain_json() -> None:
@@ -21,7 +22,7 @@ def test_parse_json_response_extracts_json_from_text() -> None:
 
 
 class BadJsonClient:
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
+    def call(self, model, messages):
         return ModelCallResult(
             content='{"winner": "pro", "summary": "unterminated',
             metrics=ModelCallMetrics(
@@ -40,7 +41,7 @@ class RepairJsonClient:
     def __init__(self) -> None:
         self.calls: list[list[dict[str, str]]] = []
 
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
+    def call(self, model, messages):
         self.calls.append(messages)
         content = (
             '{"winner": "con", "winner_label": "B", "confidence": 0.6}'
@@ -50,7 +51,7 @@ class RepairJsonClient:
         return _result(model, content)
 
 
-def _result(model: ModelConfig, content: str) -> ModelCallResult:
+def _result(model, content: str) -> ModelCallResult:
     return ModelCallResult(
         content=content,
         metrics=ModelCallMetrics(
@@ -64,20 +65,23 @@ def _result(model: ModelConfig, content: str) -> ModelCallResult:
     )
 
 
-def test_judge_debate_records_parse_error_instead_of_raising() -> None:
-    transcript = DebateTranscript(
+def _transcript() -> DebateTranscript:
+    return DebateTranscript(
         id="debate",
-        topic=TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con"),
-        pro_model=ModelConfig(id="pro", provider="test", model="pro"),
-        con_model=ModelConfig(id="con", provider="test", model="con"),
+        topic=TopicConfig(id="topic", motion="Motion"),
+        pro_model=DebaterConfig(id="pro", provider="test", model="pro"),
+        con_model=DebaterConfig(id="con", provider="test", model="con"),
         rounds=1,
         turns=[],
     )
 
+
+def test_judge_debate_records_parse_error_instead_of_raising() -> None:
     judgement = judge_debate(
         client=BadJsonClient(),
-        transcript=transcript,
-        judge_model=ModelConfig(id="judge", provider="test", model="judge"),
+        transcript=_transcript(),
+        judge_model=JudgeModelConfig(id="judge", provider="test", model="judge"),
+        prompt_set=default_prompt_set(),
     )
 
     assert judgement.parsed["winner"] == "parse_error"
@@ -89,21 +93,14 @@ def test_judge_debate_records_parse_error_instead_of_raising() -> None:
 
 
 def test_judge_debate_repairs_bad_json() -> None:
-    transcript = DebateTranscript(
-        id="debate",
-        topic=TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con"),
-        pro_model=ModelConfig(id="pro", provider="test", model="pro"),
-        con_model=ModelConfig(id="con", provider="test", model="con"),
-        rounds=1,
-        turns=[],
-    )
     client = RepairJsonClient()
 
     judgement = judge_debate(
         client=client,
-        transcript=transcript,
-        judge_model=ModelConfig(id="judge", provider="test", model="judge"),
+        transcript=_transcript(),
+        judge_model=JudgeModelConfig(id="judge", provider="test", model="judge"),
         judging_config=JudgingConfig(repair_retries=1, parse_retries=0),
+        prompt_set=default_prompt_set(),
     )
 
     assert judgement.parsed["winner"] == "con"

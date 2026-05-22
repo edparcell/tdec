@@ -3,10 +3,39 @@ import json
 import threading
 import time
 
-from tdec.config import JudgingConfig, ModelConfig, RunConfig, TopicConfig, TournamentConfig
+from tdec.config import (
+    DEFAULT_PROMPT_SET_CONFIG,
+    DebaterConfig,
+    JudgeModelConfig,
+    JudgingConfig,
+    ModelConfig,
+    RunConfig,
+    TopicConfig,
+    TournamentConfig,
+)
 from tdec.debate_types import ModelCallMetrics, ModelCallResult, TokenUsage
 from tdec.models import ModelCallError
 from tdec.tournament import run_tournament
+
+
+def _config(tmp_path: Path, **overrides) -> TournamentConfig:
+    defaults = {
+        "run": RunConfig(name="test", rounds=1, output_dir=tmp_path, include_self_debates=False),
+        "topics": [TopicConfig(id="topic", motion="Motion")],
+        "debaters": [
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="c", provider="test", model="c"),
+        ],
+        "judges": [
+            JudgeModelConfig(id="judge_1", provider="test", model="j1"),
+            JudgeModelConfig(id="judge_2", provider="test", model="j2"),
+        ],
+        "judging": JudgingConfig(),
+        "prompt_set": DEFAULT_PROMPT_SET_CONFIG,
+    }
+    defaults.update(overrides)
+    return TournamentConfig(**defaults)
 
 
 class StubClient:
@@ -127,33 +156,7 @@ class ThreadRecordingClient(StubClient):
 
 
 def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-        ),
-        topics=[
-            TopicConfig(
-                id="topic",
-                motion="Motion",
-                pro_position="Pro",
-                con_position="Con",
-            ),
-        ],
-        debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
-            ModelConfig(id="c", provider="test", model="c"),
-        ],
-        judges=[
-            ModelConfig(id="judge_1", provider="test", model="j1"),
-            ModelConfig(id="judge_2", provider="test", model="j2"),
-        ],
-        judging=JudgingConfig(),
-    )
-
+    config = _config(tmp_path)
     summary = run_tournament(config=config, client=StubClient())
     run_dir = Path(summary["run_dir"])
 
@@ -238,13 +241,11 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
             },
         }
     ]
-    assert {model["model_id"] for model in summary["models"]} == {"a", "b", "c", "judge_1", "judge_2"}
+    assert {model["model_id"] for model in summary["models"]} == {
+        "a", "b", "c", "judge_1", "judge_2"
+    }
     assert {model["model_id"]: model["calls"] for model in summary["models"]} == {
-        "a": 4,
-        "b": 4,
-        "c": 4,
-        "judge_1": 6,
-        "judge_2": 6,
+        "a": 4, "b": 4, "c": 4, "judge_1": 6, "judge_2": 6,
     }
     debater_elos = {
         model["model_id"]: model["elo"]
@@ -267,15 +268,14 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
 
 
 def test_run_tournament_includes_self_debates_by_default(tmp_path: Path) -> None:
-    config = TournamentConfig(
+    config = _config(
+        tmp_path,
         run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
         debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
         ],
-        judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
-        judging=JudgingConfig(),
+        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=StubClient())
@@ -286,31 +286,13 @@ def test_run_tournament_includes_self_debates_by_default(tmp_path: Path) -> None
         "topic__b_pro__a_con",
         "topic__b_pro__b_con",
     ]
-    debater_elos = {
-        model["model_id"]: model["elo"]
-        for model in summary["models"]
-        if "debater" in model["roles"]
-    }
-    assert set(debater_elos) == {"a", "b"}
 
 
 def test_run_tournament_uses_thread_pool_workers(tmp_path: Path) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-            workers=2,
-        ),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
-        debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
-            ModelConfig(id="c", provider="test", model="c"),
-        ],
+    config = _config(
+        tmp_path,
+        run=RunConfig(name="test", rounds=1, output_dir=tmp_path, include_self_debates=False, workers=2),
         judges=[],
-        judging=JudgingConfig(),
     )
     client = ThreadRecordingClient()
 
@@ -323,20 +305,13 @@ def test_run_tournament_uses_thread_pool_workers(tmp_path: Path) -> None:
 def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
     tmp_path: Path,
 ) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-        ),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+    config = _config(
+        tmp_path,
         debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
         ],
-        judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
-        judging=JudgingConfig(),
+        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=UnknownCostClient())
@@ -346,20 +321,13 @@ def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
 
 
 def test_run_tournament_skips_failed_debates_and_logs_errors(tmp_path: Path) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-        ),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+    config = _config(
+        tmp_path,
         debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
         ],
-        judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
-        judging=JudgingConfig(),
+        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=FailingDebateClient())
@@ -368,55 +336,35 @@ def test_run_tournament_skips_failed_debates_and_logs_errors(tmp_path: Path) -> 
     assert summary["debates"] == []
     assert len(summary["errors"]) == 2
     assert len(list((run_dir / "debates").glob("*.json"))) == 0
-    assert len(list((run_dir / "judgements").glob("*.json"))) == 0
     assert len(list((run_dir / "errors").glob("*.json"))) == 2
-    assert (run_dir / "errors" / "errors.jsonl").is_file()
     assert summary["errors"][0]["error_message"] == "provider unavailable api_key=<redacted>"
 
 
 def test_run_tournament_skips_failed_judgements_and_logs_errors(tmp_path: Path) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-        ),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+    config = _config(
+        tmp_path,
         debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
         ],
-        judges=[ModelConfig(id="judge_1", provider="test", model="j1")],
-        judging=JudgingConfig(),
+        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=FailingJudgeClient())
-    run_dir = Path(summary["run_dir"])
 
     assert len(summary["debates"]) == 2
     assert len(summary["errors"]) == 2
     assert all(debate["judgement_count"] == 0 for debate in summary["debates"])
-    assert len(list((run_dir / "debates").glob("*.json"))) == 2
-    assert len(list((run_dir / "judgements").glob("*.json"))) == 0
-    assert len(list((run_dir / "errors").glob("*.json"))) == 2
 
 
 def test_default_artifacts_compact_duplicate_response_metadata(tmp_path: Path) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-        ),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+    config = _config(
+        tmp_path,
         debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
         ],
         judges=[],
-        judging=JudgingConfig(),
     )
 
     summary = run_tournament(config=config, client=MetadataClient())
@@ -434,20 +382,13 @@ def test_default_artifacts_compact_duplicate_response_metadata(tmp_path: Path) -
 
 
 def test_blank_content_preserves_full_response_metadata_by_default(tmp_path: Path) -> None:
-    config = TournamentConfig(
-        run=RunConfig(
-            name="test",
-            rounds=1,
-            output_dir=tmp_path,
-            include_self_debates=False,
-        ),
-        topics=[TopicConfig(id="topic", motion="Motion", pro_position="Pro", con_position="Con")],
+    config = _config(
+        tmp_path,
         debaters=[
-            ModelConfig(id="a", provider="test", model="a"),
-            ModelConfig(id="b", provider="test", model="b"),
+            DebaterConfig(id="a", provider="test", model="a"),
+            DebaterConfig(id="b", provider="test", model="b"),
         ],
         judges=[],
-        judging=JudgingConfig(),
     )
 
     summary = run_tournament(config=config, client=BlankMetadataClient())

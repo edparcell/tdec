@@ -5,23 +5,24 @@ from __future__ import annotations
 import json
 import re
 
-from tdec.config import JudgingConfig, ModelConfig
+from tdec.config import JudgeModelConfig, JudgingConfig
 from tdec.debate_types import DebateTranscript, JudgeAttempt, Judgement, ModelCallResult
 from tdec.models import ChatModel
-from tdec.prompts import JUDGE_SYSTEM_PROMPT, judge_prompt, judge_repair_prompt
+from tdec.prompts import PromptSet
 
 
 def judge_debate(
     *,
     client: ChatModel,
     transcript: DebateTranscript,
-    judge_model: ModelConfig,
+    judge_model: JudgeModelConfig,
     judging_config: JudgingConfig | None = None,
+    prompt_set: PromptSet,
 ) -> Judgement:
     config = judging_config or JudgingConfig()
     base_messages = [
-        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
-        {"role": "user", "content": judge_prompt(transcript)},
+        {"role": "system", "content": prompt_set.render_judge_system(style=judge_model.style)},
+        {"role": "user", "content": prompt_set.render_judge(transcript=transcript)},
     ]
     attempts: list[JudgeAttempt] = []
 
@@ -40,9 +41,9 @@ def judge_debate(
                 {"role": "assistant", "content": attempts[-1].raw_text},
                 {
                     "role": "user",
-                    "content": judge_repair_prompt(
-                        attempts[-1].raw_text,
-                        attempts[-1].error or "unknown error",
+                    "content": prompt_set.render_judge_repair(
+                        bad_output=attempts[-1].raw_text,
+                        error=attempts[-1].error or "unknown error",
                     ),
                 },
             ],
@@ -62,7 +63,7 @@ def judge_debate(
 
 def _attempt(
     client: ChatModel,
-    judge_model: ModelConfig,
+    judge_model: JudgeModelConfig,
     kind: str,
     messages: list[dict[str, str]],
 ) -> JudgeAttempt:
@@ -89,7 +90,9 @@ def _judgement_from_attempts(
     judge_model_id: str,
     attempts: list[JudgeAttempt],
 ) -> Judgement:
-    final = next((attempt for attempt in reversed(attempts) if attempt.parsed is not None), attempts[-1])
+    final = next(
+        (attempt for attempt in reversed(attempts) if attempt.parsed is not None), attempts[-1]
+    )
     parsed = final.parsed
     if parsed is None:
         parsed = {

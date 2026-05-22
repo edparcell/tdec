@@ -1,0 +1,6 @@
+id: local_tinyllama_judge
+provider: ollama
+model: tinyllama
+api_base: http://localhost:11434
+temperature: 0.2
+max_tokens: 2400

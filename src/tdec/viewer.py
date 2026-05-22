@@ -47,8 +47,7 @@ def _extract_topic_motions(run_dir: Path) -> dict:
         if tid and tid not in result:
             result[tid] = {
                 "motion": topic.get("motion", tid),
-                "pro_position": topic.get("pro_position"),
-                "con_position": topic.get("con_position"),
+                "context": topic.get("context"),
             }
     return result
 

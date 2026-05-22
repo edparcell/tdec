@@ -300,11 +300,8 @@ function renderDetail(debate, judgements, container) {
   const judgeWords = judgements.reduce((sum, j) => sum + wordCount(j.raw_text), 0);
   html += `<div class="matchup"><span style="color:var(--pro-color)">PRO: ${debate.pro_model.id}</span> vs <span style="color:var(--con-color)">CON: ${debate.con_model.id}</span> &middot; ${debate.rounds} rounds &middot; ${formatCount(debateWords)} debate words &middot; ${formatCount(judgeWords)} judge words</div>`;
 
-  if (debate.topic.pro_position) {
-    html += `<details class="position-details"><summary>Pro position</summary><div class="position-text">${escapeHtml(debate.topic.pro_position)}</div></details>`;
-  }
-  if (debate.topic.con_position) {
-    html += `<details class="position-details"><summary>Con position</summary><div class="position-text">${escapeHtml(debate.topic.con_position)}</div></details>`;
+  if (debate.topic.context) {
+    html += `<details class="position-details"><summary>Context</summary><div class="position-text">${escapeHtml(debate.topic.context)}</div></details>`;
   }
   html += '</div>';
 

@@ -1,0 +1,20 @@
+debaters:
+  - local-tinyllama
+
+judges:
+  - local-tinyllama
+
+topics:
+  - id: trump_administration
+    motion: >-
+      The policies of the Trump administration have been, on balance,
+      beneficial for the United States.
+
+run:
+  name: tournament
+  rounds: 3
+  output_dir: runs
+
+judging:
+  repair_retries: 1
+  parse_retries: 1

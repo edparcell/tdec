@@ -1,0 +1,6 @@
+id: llama_4_scout
+provider: openrouter
+model: meta-llama/llama-4-scout
+api_key_env: OPENROUTER_API_KEY
+temperature: 0.7
+max_tokens: 10000

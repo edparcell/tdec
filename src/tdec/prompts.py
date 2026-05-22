@@ -1,166 +1,109 @@
-"""Prompt templates for debates and judging."""
+"""Prompt rendering via configurable template sets."""
 
 from __future__ import annotations
 
-from tdec.config import TopicConfig
+from string import Template
+
+from tdec.config import DEFAULT_PROMPT_SET_CONFIG, PromptSetConfig
 from tdec.debate_types import DebateTranscript
 
 
-DEBATER_SYSTEM_PROMPT = """\
-You are a serious competitive debater in a model-vs-model debate.
+class PromptSet:
+    """Renders debate and judge prompts from a PromptSetConfig."""
 
-Rules:
-- Argue only for your assigned side.
-- Build a broad case across the whole motion. Include moral, institutional,
-  legal, economic, strategic, execution, and real-world tradeoff dimensions when
-  relevant.
-- Do not let the debate collapse onto one narrow example unless that example is
-  genuinely decisive.
-- Rebut the opponent directly, but do not accept their framing as the full map
-  of the debate.
-- Do not tell the opponent which points they must answer.
-- Use clear structure and concrete reasoning.
-- Do not claim access to private facts or fabricated sources.
-"""
+    def __init__(self, config: PromptSetConfig) -> None:
+        self._config = config
 
+    def render_debater_system(self, *, strategy: str | None = None) -> str:
+        strategy_block = f"Your approach: {strategy.strip()}\n" if strategy else ""
+        return Template(self._config.debater_system).safe_substitute(
+            strategy_block=strategy_block,
+        )
 
-def opening_prompt(topic: TopicConfig, side: str, rounds: int) -> str:
-    position = topic.pro_position if side == "pro" else topic.con_position
-    return f"""\
-Motion: {topic.motion}
+    def render_opening(
+        self, *, motion: str, context: str | None, side: str, rounds: int
+    ) -> str:
+        return Template(self._config.opening).safe_substitute(
+            motion=motion,
+            context_block=_context_block(context),
+            side=side.upper(),
+            rounds=str(rounds),
+        )
 
-You are arguing {side.upper()}.
+    def render_response(
+        self,
+        *,
+        motion: str,
+        context: str | None,
+        side: str,
+        round_number: int,
+        rounds: int,
+    ) -> str:
+        turn_name = "closing" if round_number == rounds else f"turn {round_number}"
+        return Template(self._config.response).safe_substitute(
+            motion=motion,
+            context_block=_context_block(context),
+            side=side.upper(),
+            turn_name=turn_name,
+            rounds=str(rounds),
+        )
 
-Your position:
-{position}
+    def render_parallel_opening(
+        self, *, motion: str, context: str | None, side: str, rounds: int
+    ) -> str:
+        return Template(self._config.parallel_opening).safe_substitute(
+            motion=motion,
+            context_block=_context_block(context),
+            side=side.upper(),
+            rounds=str(rounds),
+        )
 
-This debate has {rounds} turns per side. You go first.
+    def render_parallel_response(
+        self,
+        *,
+        motion: str,
+        context: str | None,
+        side: str,
+        round_number: int,
+        rounds: int,
+    ) -> str:
+        turn_name = "closing" if round_number == rounds else f"turn {round_number}"
+        return Template(self._config.parallel_response).safe_substitute(
+            motion=motion,
+            context_block=_context_block(context),
+            side=side.upper(),
+            turn_name=turn_name,
+            rounds=str(rounds),
+        )
 
-Give your opening case. Go wide: identify the strongest affirmative and
-negative terrain and explain why your side should win across the motion as a
-whole. Do not frame the opponent's choices for them.
-"""
+    def render_judge_system(self, *, style: str | None = None) -> str:
+        style_block = f"{style.strip()}\n" if style else ""
+        return Template(self._config.judge_system).safe_substitute(
+            style_block=style_block,
+        )
 
+    def render_judge(self, *, transcript: DebateTranscript) -> str:
+        transcript_text = "\n\n".join(
+            f"{t.speaker_label} ({t.side}, turn {t.turn_number}):\n{t.content}"
+            for t in transcript.turns
+        )
+        return Template(self._config.judge).safe_substitute(
+            motion=transcript.topic.motion,
+            transcript=transcript_text,
+        )
 
-def response_prompt(topic: TopicConfig, side: str, round_number: int, rounds: int) -> str:
-    position = topic.pro_position if side == "pro" else topic.con_position
-    turn_name = "closing" if round_number == rounds else f"turn {round_number}"
-    return f"""\
-Motion: {topic.motion}
-
-You are arguing {side.upper()}.
-
-Your position:
-{position}
-
-This is your {turn_name} of {rounds}. Answer the opponent's strongest points,
-but keep the whole motion in view. If this is your closing turn, explain why
-your side wins overall rather than only on the most recent sub-point.
-"""
-
-
-def parallel_opening_prompt(topic: TopicConfig, side: str, rounds: int) -> str:
-    position = topic.pro_position if side == "pro" else topic.con_position
-    return f"""\
-Motion: {topic.motion}
-
-You are arguing {side.upper()}.
-
-Your position:
-{position}
-
-This debate has {rounds} turns per side. Both sides deliver their opening
-cases simultaneously — you have not seen the opponent's opening.
-
-Give your opening case. Go wide: identify the strongest affirmative and
-negative terrain and explain why your side should win across the motion as a
-whole. Do not frame the opponent's choices for them.
-"""
-
-
-def parallel_response_prompt(
-    topic: TopicConfig, side: str, round_number: int, rounds: int
-) -> str:
-    position = topic.pro_position if side == "pro" else topic.con_position
-    turn_name = "closing" if round_number == rounds else f"turn {round_number}"
-    return f"""\
-Motion: {topic.motion}
-
-You are arguing {side.upper()}.
-
-Your position:
-{position}
-
-This is your {turn_name} of {rounds}. Both sides speak simultaneously each
-round — you have seen all prior rounds from both sides, but you have not
-seen the opponent's current round. Answer the opponent's strongest points
-from previous rounds, but keep the whole motion in view. If this is your
-closing turn, explain why your side wins overall rather than only on the
-most recent sub-point.
-"""
+    def render_judge_repair(self, *, bad_output: str, error: str) -> str:
+        return Template(self._config.judge_repair).safe_substitute(
+            bad_output=bad_output,
+            error=error,
+        )
 
 
-JUDGE_SYSTEM_PROMPT = """\
-You are an impartial judge in a model-vs-model debate tournament.
-
-Judge the debate from the transcript only. The debaters are anonymized as
-Debater A and Debater B. Do not reward a side because of your prior political or
-policy preference. Reward debate quality: breadth, responsiveness, evidence,
-moral reasoning, institutional reasoning, strategic clarity, and closing
-weighing.
-
-Return only valid compact JSON. Do not wrap it in Markdown. Keep all string
-values short enough that the entire response can fit comfortably in 900 tokens.
-"""
+def default_prompt_set() -> PromptSet:
+    return PromptSet(DEFAULT_PROMPT_SET_CONFIG)
 
 
-def judge_prompt(transcript: DebateTranscript) -> str:
-    turns = "\n\n".join(
-        f"{turn.speaker_label} ({turn.side}, turn {turn.turn_number}):\n{turn.content}"
-        for turn in transcript.turns
-    )
-    return f"""\
-Motion: {transcript.topic.motion}
-
-Transcript:
-{turns}
-
-Return exactly this compact JSON shape:
-{{
-  "winner": "pro" | "con" | "tie",
-  "winner_label": "A" | "B" | "tie",
-  "confidence": 0.0,
-  "pro_score": 0,
-  "con_score": 0,
-  "rubric": {{
-    "breadth": {{"pro": 0, "con": 0}},
-    "responsiveness": {{"pro": 0, "con": 0}},
-    "evidence_quality": {{"pro": 0, "con": 0}},
-    "moral_reasoning": {{"pro": 0, "con": 0}},
-    "institutional_reasoning": {{"pro": 0, "con": 0}},
-    "strategic_clarity": {{"pro": 0, "con": 0}}
-  }},
-  "decisive_reasons": ["reason under 120 chars", "reason under 120 chars", "reason under 120 chars"],
-  "audience_estimate": {{"pro_votes": 0, "con_votes": 0}},
-  "summary": "one sentence under 200 chars"
-}}
-
-Scores are 0-100 for side totals and 0-10 for rubric cells. Audience votes must
-sum to 100. Use "tie" only when genuinely inseparable.
-"""
-
-
-def judge_repair_prompt(bad_output: str, error: str) -> str:
-    return f"""\
-Your previous judgement was not valid JSON.
-
-JSON parse error:
-{error}
-
-Previous output:
-{bad_output}
-
-Return only corrected compact JSON in the same schema requested before. Do not
-add Markdown or commentary. Do not change the judgement unless required to make
-the JSON valid.
-"""
+def _context_block(context: str | None) -> str:
+    if not context:
+        return ""
+    return f"\nContext:\n{context.strip()}\n"

@@ -22,11 +22,12 @@ from tdec.artifacts import (
     write_judgement,
     write_summary,
 )
-from tdec.config import JudgeRunConfig, ModelConfig, TournamentConfig
+from tdec.config import DebaterConfig, JudgeModelConfig, JudgeRunConfig, TournamentConfig
 from tdec.debate import OpeningCache, debate_pairings, run_debate, run_parallel_debate
 from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 from tdec.judging import judge_debate
 from tdec.models import ChatModel, ModelCallError
+from tdec.prompts import PromptSet, default_prompt_set
 
 ELO_K = 32
 STARTING_ELO = 1500.0
@@ -72,6 +73,7 @@ def run_tournament(
     if worker_count < 1:
         raise ValueError("workers must be at least 1")
 
+    prompt_set = PromptSet(config.prompt_set)
     opening_cache = OpeningCache() if config.run.reuse_openings else None
     debate_fn = run_parallel_debate if config.run.parallel_rounds else run_debate
 
@@ -82,9 +84,10 @@ def run_tournament(
                 debate_fn,
                 client=client,
                 topic=config.topics[job.topic_index],
-                pro_model=_model_by_id(config.debaters, job.pro_model_id),
-                con_model=_model_by_id(config.debaters, job.con_model_id),
+                pro_model=_debater_by_id(config.debaters, job.pro_model_id),
+                con_model=_debater_by_id(config.debaters, job.con_model_id),
                 rounds=config.run.rounds,
+                prompt_set=prompt_set,
                 opening_cache=opening_cache,
             ): job
             for job in _debate_jobs(config)
@@ -118,8 +121,9 @@ def run_tournament(
                 judge_debate,
                 client=client,
                 transcript=transcript,
-                judge_model=_model_by_id(config.judges, job.judge_model_id),
+                judge_model=_judge_by_id(config.judges, job.judge_model_id),
                 judging_config=config.judging,
+                prompt_set=prompt_set,
             ): job
             for job, transcript in _judgement_jobs(debates, config)
         }
@@ -159,7 +163,9 @@ def run_posthoc_judges(
     client: ChatModel,
     artifact_verbosity: ArtifactVerbosity = "compact",
     workers: int = 1,
+    prompt_set: PromptSet | None = None,
 ) -> TournamentResult:
+    ps = prompt_set or default_prompt_set()
     debates = load_debate_transcripts(run_dir)
     existing = existing_judgement_keys(run_dir)
 
@@ -191,8 +197,9 @@ def run_posthoc_judges(
                     judge_debate,
                     client=client,
                     transcript=transcript,
-                    judge_model=_model_by_id(judge_config.judges, job.judge_model_id),
+                    judge_model=_judge_by_id(judge_config.judges, job.judge_model_id),
                     judging_config=judge_config.judging,
+                    prompt_set=ps,
                 ): job
                 for job, transcript in jobs
             }
@@ -264,7 +271,11 @@ def _judgement_jobs(
     return jobs
 
 
-def _model_by_id(models: list[ModelConfig], model_id: str) -> ModelConfig:
+def _debater_by_id(models: list[DebaterConfig], model_id: str) -> DebaterConfig:
+    return next(model for model in models if model.id == model_id)
+
+
+def _judge_by_id(models: list[JudgeModelConfig], model_id: str) -> JudgeModelConfig:
     return next(model for model in models if model.id == model_id)
 
 

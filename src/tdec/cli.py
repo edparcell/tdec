@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from tdec.config import load_judge_config, load_tournament_config
+from tdec.config import load_judge_config, load_run_config
 from tdec.env import load_env_file
 from tdec.models import LiteLLMClient
 from tdec.tournament import run_posthoc_judges, run_tournament
@@ -54,9 +54,9 @@ def run(
     no_reuse_openings: bool,
 ) -> None:
     """Run a debate tournament from a YAML config."""
-    load_env_file(config_path.parent.parent / ".env")
+    load_env_file(config_path.parent.parent.parent / ".env")
     load_env_file(".env")
-    config = load_tournament_config(config_path)
+    config = load_run_config(config_path)
     if no_reuse_openings:
         config = replace(config, run=replace(config.run, reuse_openings=False))
     result = run_tournament(

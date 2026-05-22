@@ -77,9 +77,14 @@ class DebateTranscript:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DebateTranscript:
+        topic_data = data["topic"]
         return cls(
             id=data["id"],
-            topic=TopicConfig(**data["topic"]),
+            topic=TopicConfig(
+                id=topic_data["id"],
+                motion=topic_data["motion"],
+                context=topic_data.get("context"),
+            ),
             pro_model=_model_config_from_dict(data["pro_model"]),
             con_model=_model_config_from_dict(data["con_model"]),
             rounds=data["rounds"],

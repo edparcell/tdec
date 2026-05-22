@@ -1,0 +1,6 @@
+id: gpt_5_nano
+provider: openrouter
+model: openai/gpt-5-nano
+api_key_env: OPENROUTER_API_KEY
+temperature: null
+max_tokens: 10000

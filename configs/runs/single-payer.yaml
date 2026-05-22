@@ -1,0 +1,34 @@
+prompt_set: default
+
+debaters:
+  - gpt-5-nano
+  - deepseek-v4-flash
+  - qwen-3-5-flash
+  - mistral-small-4
+  - llama-4-scout
+
+judges:
+  - claude-haiku-4-5
+  - grok-4-3
+
+topics:
+  - id: us_single_payer_healthcare
+    motion: >-
+      The United States should adopt a single-payer healthcare system.
+    context: >-
+      Consider cost, access, quality, innovation, administrative complexity,
+      fiscal tradeoffs, labor markets, political feasibility, moral obligations,
+      and institutional execution.
+
+run:
+  name: single-payer-openrouter
+  rounds: 3
+  output_dir: runs
+  include_self_debates: true
+  workers: 10
+  reuse_openings: true
+  parallel_rounds: false
+
+judging:
+  repair_retries: 1
+  parse_retries: 1

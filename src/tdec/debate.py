@@ -5,16 +5,10 @@ from __future__ import annotations
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-from tdec.config import ModelConfig, TopicConfig
+from tdec.config import DebaterConfig, TopicConfig
 from tdec.debate_types import DebateTranscript, DebateTurn, ModelCallResult, Side
 from tdec.models import ChatModel
-from tdec.prompts import (
-    DEBATER_SYSTEM_PROMPT,
-    opening_prompt,
-    parallel_opening_prompt,
-    parallel_response_prompt,
-    response_prompt,
-)
+from tdec.prompts import PromptSet
 
 
 class OpeningCache:
@@ -49,16 +43,17 @@ def run_debate(
     *,
     client: ChatModel,
     topic: TopicConfig,
-    pro_model: ModelConfig,
-    con_model: ModelConfig,
+    pro_model: DebaterConfig,
+    con_model: DebaterConfig,
     rounds: int,
+    prompt_set: PromptSet,
     opening_cache: OpeningCache | None = None,
 ) -> DebateTranscript:
     debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
     turns: list[DebateTurn] = []
     histories: dict[Side, list[dict[str, str]]] = {
-        "pro": [{"role": "system", "content": DEBATER_SYSTEM_PROMPT}],
-        "con": [{"role": "system", "content": DEBATER_SYSTEM_PROMPT}],
+        "pro": [{"role": "system", "content": prompt_set.render_debater_system(strategy=pro_model.strategy)}],
+        "con": [{"role": "system", "content": prompt_set.render_debater_system(strategy=con_model.strategy)}],
     }
 
     for round_number in range(1, rounds + 1):
@@ -67,11 +62,16 @@ def run_debate(
             ("con", con_model, "B"),
         ]:
             is_pro_opening = round_number == 1 and side == "pro"
-            prompt = (
-                opening_prompt(topic, side, rounds)
-                if is_pro_opening
-                else response_prompt(topic, side, round_number, rounds)
-            )
+            if is_pro_opening:
+                prompt = prompt_set.render_opening(
+                    motion=topic.motion, context=topic.context,
+                    side=side, rounds=rounds,
+                )
+            else:
+                prompt = prompt_set.render_response(
+                    motion=topic.motion, context=topic.context,
+                    side=side, round_number=round_number, rounds=rounds,
+                )
             histories[side].append({"role": "user", "content": prompt})
 
             if is_pro_opening and opening_cache is not None:
@@ -109,19 +109,20 @@ def run_parallel_debate(
     *,
     client: ChatModel,
     topic: TopicConfig,
-    pro_model: ModelConfig,
-    con_model: ModelConfig,
+    pro_model: DebaterConfig,
+    con_model: DebaterConfig,
     rounds: int,
+    prompt_set: PromptSet,
     opening_cache: OpeningCache | None = None,
 ) -> DebateTranscript:
     debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
     turns: list[DebateTurn] = []
     histories: dict[Side, list[dict[str, str]]] = {
-        "pro": [{"role": "system", "content": DEBATER_SYSTEM_PROMPT}],
-        "con": [{"role": "system", "content": DEBATER_SYSTEM_PROMPT}],
+        "pro": [{"role": "system", "content": prompt_set.render_debater_system(strategy=pro_model.strategy)}],
+        "con": [{"role": "system", "content": prompt_set.render_debater_system(strategy=con_model.strategy)}],
     }
 
-    sides: list[tuple[Side, ModelConfig, str]] = [
+    sides: list[tuple[Side, DebaterConfig, str]] = [
         ("pro", pro_model, "A"),
         ("con", con_model, "B"),
     ]
@@ -129,12 +130,18 @@ def run_parallel_debate(
     for round_number in range(1, rounds + 1):
         for side, _model, _label in sides:
             if round_number == 1:
-                prompt = parallel_opening_prompt(topic, side, rounds)
+                prompt = prompt_set.render_parallel_opening(
+                    motion=topic.motion, context=topic.context,
+                    side=side, rounds=rounds,
+                )
             else:
-                prompt = parallel_response_prompt(topic, side, round_number, rounds)
+                prompt = prompt_set.render_parallel_response(
+                    motion=topic.motion, context=topic.context,
+                    side=side, round_number=round_number, rounds=rounds,
+                )
             histories[side].append({"role": "user", "content": prompt})
 
-        def _call_side(side: Side, model: ModelConfig) -> ModelCallResult:
+        def _call_side(side: Side, model: DebaterConfig) -> ModelCallResult:
             if round_number == 1 and opening_cache is not None:
                 cache_key = (model.id, topic.id, side)
                 return opening_cache.get_or_call(
@@ -201,10 +208,10 @@ def _share_round(
 
 
 def debate_pairings(
-    models: list[ModelConfig],
+    models: list[DebaterConfig],
     *,
     include_self_debates: bool = True,
-) -> list[tuple[ModelConfig, ModelConfig]]:
+) -> list[tuple[DebaterConfig, DebaterConfig]]:
     pairings = []
     for index, first in enumerate(models):
         if include_self_debates:

@@ -1,4 +1,4 @@
-from tdec.config import ModelConfig, TopicConfig
+from tdec.config import DebaterConfig, ModelConfig, TopicConfig
 from tdec.debate import debate_pairings, run_debate
 from tdec.debate_types import (
     DebateTranscript,
@@ -7,6 +7,7 @@ from tdec.debate_types import (
     ModelCallResult,
     TokenUsage,
 )
+from tdec.prompts import default_prompt_set
 
 
 class StubClient:
@@ -20,9 +21,9 @@ class StubClient:
 
 def test_debate_pairings_includes_self_debates_by_default() -> None:
     models = [
-        ModelConfig(id="a", provider="test", model="a"),
-        ModelConfig(id="b", provider="test", model="b"),
-        ModelConfig(id="c", provider="test", model="c"),
+        DebaterConfig(id="a", provider="test", model="a"),
+        DebaterConfig(id="b", provider="test", model="b"),
+        DebaterConfig(id="c", provider="test", model="c"),
     ]
 
     assert [(pro.id, con.id) for pro, con in debate_pairings(models)] == [
@@ -40,9 +41,9 @@ def test_debate_pairings_includes_self_debates_by_default() -> None:
 
 def test_debate_pairings_can_skip_self_debates() -> None:
     models = [
-        ModelConfig(id="a", provider="test", model="a"),
-        ModelConfig(id="b", provider="test", model="b"),
-        ModelConfig(id="c", provider="test", model="c"),
+        DebaterConfig(id="a", provider="test", model="a"),
+        DebaterConfig(id="b", provider="test", model="b"),
+        DebaterConfig(id="c", provider="test", model="c"),
     ]
 
     assert [
@@ -59,14 +60,9 @@ def test_debate_pairings_can_skip_self_debates() -> None:
 
 
 def test_run_debate_produces_three_rounds_per_side() -> None:
-    topic = TopicConfig(
-        id="topic",
-        motion="Motion text",
-        pro_position="Pro position",
-        con_position="Con position",
-    )
-    pro = ModelConfig(id="model_a", provider="test", model="a")
-    con = ModelConfig(id="model_b", provider="test", model="b")
+    topic = TopicConfig(id="topic", motion="Motion text")
+    pro = DebaterConfig(id="model_a", provider="test", model="a")
+    con = DebaterConfig(id="model_b", provider="test", model="b")
     client = StubClient()
 
     transcript = run_debate(
@@ -75,6 +71,7 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
         pro_model=pro,
         con_model=con,
         rounds=3,
+        prompt_set=default_prompt_set(),
     )
 
     assert transcript.id == "topic__model_a_pro__model_b_con"
@@ -88,17 +85,16 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
 
 
 def test_transcript_artifact_redacts_api_keys() -> None:
-    topic = TopicConfig(
-        id="topic",
-        motion="Motion text",
-        pro_position="Pro position",
-        con_position="Con position",
-    )
+    topic = TopicConfig(id="topic", motion="Motion text")
     transcript = DebateTranscript(
         id="debate",
         topic=topic,
-        pro_model=ModelConfig(id="pro", provider="openrouter", model="model-a", api_key="secret"),
-        con_model=ModelConfig(id="con", provider="openrouter", model="model-b", api_key="secret"),
+        pro_model=DebaterConfig(
+            id="pro", provider="openrouter", model="model-a", api_key="secret"
+        ),
+        con_model=DebaterConfig(
+            id="con", provider="openrouter", model="model-b", api_key="secret"
+        ),
         rounds=1,
         turns=[
             DebateTurn(

@@ -1,0 +1,6 @@
+id: claude_haiku_4_5
+provider: openrouter
+model: anthropic/claude-haiku-4.5
+api_key_env: OPENROUTER_API_KEY
+temperature: null
+max_tokens: 10000
