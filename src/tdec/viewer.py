@@ -53,6 +53,77 @@ def _extract_topic_motions(run_dir: Path) -> dict:
     return result
 
 
+def _compute_judge_stats(run_dir: Path) -> dict:
+    judgements = []
+    for f in sorted((run_dir / "judgements").glob("*.json")):
+        judgements.append(json.loads(f.read_text(encoding="utf-8")))
+
+    debates = {}
+    for f in sorted((run_dir / "debates").glob("*.json")):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        debates[d["id"]] = d
+
+    judge_ids = sorted({j["judge_model_id"] for j in judgements})
+    debater_ids = sorted({d["pro_model"]["id"] for d in debates.values()}
+                         | {d["con_model"]["id"] for d in debates.values()})
+
+    per_judge: dict[str, dict] = {}
+    for jid in judge_ids:
+        per_judge[jid] = {"total": 0, "pro": 0, "con": 0, "tie": 0, "parse_error": 0}
+
+    judge_debater: dict[str, dict[str, dict]] = {}
+    for jid in judge_ids:
+        judge_debater[jid] = {}
+        for did in debater_ids:
+            judge_debater[jid][did] = {"voted_for": 0, "total": 0}
+
+    judge_pairs: dict[str, list] = {}
+    for debate_id in debates:
+        debate_judges = [j for j in judgements if j["debate_id"] == debate_id]
+        for j in debate_judges:
+            jid = j["judge_model_id"]
+            winner = (j.get("parsed") or {}).get("winner", "parse_error")
+            per_judge[jid]["total"] += 1
+            per_judge[jid][winner] = per_judge[jid].get(winner, 0) + 1
+
+            debate = debates[debate_id]
+            pro_id = debate["pro_model"]["id"]
+            con_id = debate["con_model"]["id"]
+            if pro_id != con_id:
+                judge_debater[jid][pro_id]["total"] += 1
+                judge_debater[jid][con_id]["total"] += 1
+                if winner == "pro":
+                    judge_debater[jid][pro_id]["voted_for"] += 1
+                elif winner == "con":
+                    judge_debater[jid][con_id]["voted_for"] += 1
+
+        for i, ja in enumerate(debate_judges):
+            for jb in debate_judges[i + 1:]:
+                key = "|".join(sorted([ja["judge_model_id"], jb["judge_model_id"]]))
+                judge_pairs.setdefault(key, [])
+                wa = (ja.get("parsed") or {}).get("winner")
+                wb = (jb.get("parsed") or {}).get("winner")
+                if wa and wb and wa != "parse_error" and wb != "parse_error":
+                    judge_pairs[key].append(1 if wa == wb else 0)
+
+    agreement = {}
+    for key, votes in judge_pairs.items():
+        if votes:
+            agreement[key] = {
+                "agreed": sum(votes),
+                "total": len(votes),
+                "pct": round(100 * sum(votes) / len(votes), 1),
+            }
+
+    return {
+        "judge_ids": judge_ids,
+        "debater_ids": debater_ids,
+        "per_judge": per_judge,
+        "judge_debater": judge_debater,
+        "agreement": agreement,
+    }
+
+
 def _compute_word_counts(run_dir: Path) -> dict:
     debate_words = 0
     judgement_words = 0
@@ -88,6 +159,7 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
     css_text = _STATIC_DIR.joinpath("viewer.css").read_text(encoding="utf-8")
     topic_motions = _extract_topic_motions(run_dir)
     word_counts = _compute_word_counts(run_dir)
+    judge_stats = _compute_judge_stats(run_dir)
     env = _jinja_env()
     template = env.get_template("viewer.html")
 
@@ -102,6 +174,7 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
             all_judgements="null",
             topic_motions=json.dumps(topic_motions),
             word_counts=json.dumps(word_counts),
+            judge_stats=json.dumps(judge_stats),
             inline_css=None,
         )
 
@@ -147,6 +220,7 @@ def export_html(run_dir: Path, output: Path) -> None:
     template = env.get_template("viewer.html")
     topic_motions = _extract_topic_motions(run_dir)
     word_counts = _compute_word_counts(run_dir)
+    judge_stats = _compute_judge_stats(run_dir)
     html = template.render(
         run_name=run_dir.name,
         summary=json.dumps(summary),
@@ -154,6 +228,7 @@ def export_html(run_dir: Path, output: Path) -> None:
         all_judgements=json.dumps(judgements),
         topic_motions=json.dumps(topic_motions),
         word_counts=json.dumps(word_counts),
+        judge_stats=json.dumps(judge_stats),
         inline_css=css,
     )
     output.write_text(html, encoding="utf-8")

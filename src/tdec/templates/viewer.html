@@ -20,8 +20,19 @@
 
 <div class="main-layout">
   <div class="left-panel" id="left-panel">
-    <div id="elo-section"></div>
-    <div id="matrix-section"></div>
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('debates')">Debates</button>
+      <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
+    </div>
+    <div id="tab-debates" class="tab-content active">
+      <div id="elo-section"></div>
+      <div id="matrix-section"></div>
+    </div>
+    <div id="tab-judges" class="tab-content">
+      <div id="judge-votes-section"></div>
+      <div id="judge-debater-section"></div>
+      <div id="judge-agreement-section"></div>
+    </div>
   </div>
   <div class="right-panel" id="right-panel">
     <button class="back-btn" id="back-btn" onclick="showList()">Back to matrix</button>
@@ -37,6 +48,7 @@ const ALL_DEBATES = {{ all_debates|safe }};
 const ALL_JUDGEMENTS = {{ all_judgements|safe }};
 const TOPIC_MOTIONS = {{ topic_motions|safe }};
 const WORD_COUNTS = {{ word_counts|safe }};
+const JUDGE_STATS = {{ judge_stats|safe }};
 
 let activeTopic = null;
 
@@ -375,11 +387,122 @@ function inlineMd(text) {
   return text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\*(.+?)\*/g, '<em>$1</em>');
 }
 
+// ── Tabs ──
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(el => el.classList.toggle('active', el.textContent.toLowerCase() === tab));
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+// ── Judge analytics ──
+function renderJudgeVotes() {
+  const section = document.getElementById('judge-votes-section');
+  const judges = JUDGE_STATS.judge_ids;
+  const pj = JUDGE_STATS.per_judge;
+
+  let html = '<div class="section-title">Judge Pro/Con Voting</div>';
+  html += '<div class="judge-summary-cards">';
+  for (const jid of judges) {
+    const s = pj[jid];
+    const total = s.total || 1;
+    const proPct = (100 * s.pro / total).toFixed(0);
+    const conPct = (100 * s.con / total).toFixed(0);
+    const tiePct = (100 * (s.tie || 0) / total).toFixed(0);
+    html += `<div class="judge-summary-card">`;
+    html += `<div class="judge-id">${shortName(jid)}</div>`;
+    html += `<div class="vote-bar">`;
+    html += `<div class="pro-bar" style="width:${proPct}%"></div>`;
+    html += `<div class="con-bar" style="width:${conPct}%"></div>`;
+    html += `<div class="tie-bar" style="width:${tiePct}%"></div>`;
+    html += `</div>`;
+    html += `<div class="vote-labels"><span style="color:var(--pro-color)">${proPct}% pro</span> · <span style="color:var(--con-color)">${conPct}% con</span>${s.tie ? ` · <span style="color:var(--tie-color)">${tiePct}% tie</span>` : ''} · ${s.total} votes</div>`;
+    html += `</div>`;
+  }
+  html += '</div>';
+  section.innerHTML = html;
+}
+
+function renderJudgeDebaterMatrix() {
+  const section = document.getElementById('judge-debater-section');
+  const judges = JUDGE_STATS.judge_ids;
+  const debaters = JUDGE_STATS.debater_ids;
+  const jd = JUDGE_STATS.judge_debater;
+
+  let html = '<div class="section-title">Judge Win Rate by Debater</div>';
+  html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+  html += '<tr><th></th>';
+  for (const did of debaters) html += `<th>${shortName(did)}</th>`;
+  html += '</tr>';
+
+  for (const jid of judges) {
+    html += `<tr><th class="row-header">${shortName(jid)}</th>`;
+    for (const did of debaters) {
+      const cell = jd[jid][did];
+      if (cell.total > 0) {
+        const pct = Math.round(100 * cell.voted_for / cell.total);
+        const ratio = (pct - 50) / 50;
+        const bg = cellGradient(ratio);
+        html += `<td style="background:${bg}">${pct}%</td>`;
+      } else {
+        html += '<td style="opacity:0.3">-</td>';
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</table></div>';
+  section.innerHTML = html;
+}
+
+function renderJudgeAgreement() {
+  const section = document.getElementById('judge-agreement-section');
+  const judges = JUDGE_STATS.judge_ids;
+  const agr = JUDGE_STATS.agreement;
+
+  if (judges.length < 2) { section.innerHTML = ''; return; }
+
+  let html = '<div class="section-title">Judge Agreement</div>';
+  html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+  html += '<tr><th></th>';
+  for (const jid of judges) html += `<th>${shortName(jid)}</th>`;
+  html += '</tr>';
+
+  for (const ja of judges) {
+    html += `<tr><th class="row-header">${shortName(ja)}</th>`;
+    for (const jb of judges) {
+      if (ja === jb) {
+        html += '<td style="opacity:0.3">-</td>';
+      } else {
+        const key = [ja, jb].sort().join('|');
+        const data = agr[key];
+        if (data) {
+          const ratio = (data.pct - 50) / 50;
+          const bg = agreementGradient(data.pct);
+          html += `<td style="background:${bg}">${data.pct}%</td>`;
+        } else {
+          html += '<td style="opacity:0.3">-</td>';
+        }
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</table></div>';
+  section.innerHTML = html;
+}
+
+function agreementGradient(pct) {
+  if (pct >= 70) return `rgba(34,197,94,${((pct - 50) / 100).toFixed(2)})`;
+  if (pct <= 30) return `rgba(239,68,68,${((50 - pct) / 100).toFixed(2)})`;
+  return 'transparent';
+}
+
 // ── Init ──
 renderStats();
 renderMotionBar();
 renderElo();
 buildMatrix();
+renderJudgeVotes();
+renderJudgeDebaterMatrix();
+renderJudgeAgreement();
 if (window.innerWidth > 900) document.getElementById('right-panel').classList.add('active');
 </script>
 </body>
