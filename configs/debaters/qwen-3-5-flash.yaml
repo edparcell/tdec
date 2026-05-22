@@ -4,3 +4,4 @@ model: qwen/qwen3.5-flash-02-23
 api_key_env: OPENROUTER_API_KEY
 temperature: 0.7
 max_tokens: 10000
+strategy: ""

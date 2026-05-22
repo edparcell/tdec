@@ -27,12 +27,12 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class DebaterConfig(ModelConfig):
-    strategy: str | None = None
+    strategy: str = ""
 
 
 @dataclass(frozen=True)
 class JudgeModelConfig(ModelConfig):
-    style: str | None = None
+    style: str = ""
 
 
 @dataclass(frozen=True)
@@ -141,8 +141,10 @@ def load_debater_config(path: str | Path) -> DebaterConfig:
     if not config_path.exists():
         raise ValueError(f"Debater config not found: {config_path}")
     data = _load_yaml(config_path)
+    if "strategy" not in data:
+        raise ValueError(f"Debater config {config_path} must include 'strategy' (may be empty)")
     base = _model_config_fields(data)
-    return DebaterConfig(**base, strategy=data.get("strategy"))
+    return DebaterConfig(**base, strategy=str(data["strategy"] or ""))
 
 
 def load_judge_model_config(path: str | Path) -> JudgeModelConfig:
@@ -150,8 +152,10 @@ def load_judge_model_config(path: str | Path) -> JudgeModelConfig:
     if not config_path.exists():
         raise ValueError(f"Judge config not found: {config_path}")
     data = _load_yaml(config_path)
+    if "style" not in data:
+        raise ValueError(f"Judge config {config_path} must include 'style' (may be empty)")
     base = _model_config_fields(data)
-    return JudgeModelConfig(**base, style=data.get("style"))
+    return JudgeModelConfig(**base, style=str(data["style"] or ""))
 
 
 def load_prompt_set_config(path: str | Path) -> PromptSetConfig:
@@ -219,8 +223,10 @@ def _model_config_fields(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _judge_model_config_inline(data: dict[str, Any]) -> JudgeModelConfig:
+    if "style" not in data:
+        raise ValueError("Inline judge config must include 'style' (may be empty)")
     base = _model_config_fields(data)
-    return JudgeModelConfig(**base, style=data.get("style"))
+    return JudgeModelConfig(**base, style=str(data["style"] or ""))
 
 
 def _topic_config(data: dict[str, Any]) -> TopicConfig:

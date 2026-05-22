@@ -4,3 +4,4 @@ model: tinyllama
 api_base: http://localhost:11434
 temperature: 0.2
 max_tokens: 2400
+style: ""

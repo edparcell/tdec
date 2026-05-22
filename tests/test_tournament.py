@@ -25,13 +25,13 @@ def _config(tmp_path: Path, **overrides) -> TournamentConfig:
         "run": RunConfig(name="test", rounds=1, output_dir=tmp_path, include_self_debates=False),
         "topics": [TopicConfig(id="topic", motion="Motion")],
         "debaters": [
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
-            DebaterConfig(id="c", provider="test", model="c"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="c", provider="test", model="c"),
         ],
         "judges": [
-            JudgeModelConfig(id="judge_1", provider="test", model="j1"),
-            JudgeModelConfig(id="judge_2", provider="test", model="j2"),
+            JudgeModelConfig(style="", id="judge_1", provider="test", model="j1"),
+            JudgeModelConfig(style="", id="judge_2", provider="test", model="j2"),
         ],
         "judging": JudgingConfig(),
         "prompt_set": _PROMPT_SET_CONFIG,
@@ -274,10 +274,10 @@ def test_run_tournament_includes_self_debates_by_default(tmp_path: Path) -> None
         tmp_path,
         run=RunConfig(name="test", rounds=1, output_dir=tmp_path),
         debaters=[
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
         ],
-        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
+        judges=[JudgeModelConfig(style="", id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=StubClient())
@@ -310,10 +310,10 @@ def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
     config = _config(
         tmp_path,
         debaters=[
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
         ],
-        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
+        judges=[JudgeModelConfig(style="", id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=UnknownCostClient())
@@ -326,10 +326,10 @@ def test_run_tournament_skips_failed_debates_and_logs_errors(tmp_path: Path) -> 
     config = _config(
         tmp_path,
         debaters=[
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
         ],
-        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
+        judges=[JudgeModelConfig(style="", id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=FailingDebateClient())
@@ -346,10 +346,10 @@ def test_run_tournament_skips_failed_judgements_and_logs_errors(tmp_path: Path) 
     config = _config(
         tmp_path,
         debaters=[
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
         ],
-        judges=[JudgeModelConfig(id="judge_1", provider="test", model="j1")],
+        judges=[JudgeModelConfig(style="", id="judge_1", provider="test", model="j1")],
     )
 
     summary = run_tournament(config=config, client=FailingJudgeClient())
@@ -363,8 +363,8 @@ def test_default_artifacts_compact_duplicate_response_metadata(tmp_path: Path) -
     config = _config(
         tmp_path,
         debaters=[
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
         ],
         judges=[],
     )
@@ -387,8 +387,8 @@ def test_blank_content_preserves_full_response_metadata_by_default(tmp_path: Pat
     config = _config(
         tmp_path,
         debaters=[
-            DebaterConfig(id="a", provider="test", model="a"),
-            DebaterConfig(id="b", provider="test", model="b"),
+            DebaterConfig(strategy="", id="a", provider="test", model="a"),
+            DebaterConfig(strategy="", id="b", provider="test", model="b"),
         ],
         judges=[],
     )

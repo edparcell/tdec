@@ -73,8 +73,8 @@ def _transcript() -> DebateTranscript:
     return DebateTranscript(
         id="debate",
         topic=TopicConfig(id="topic", motion="Motion"),
-        pro_model=DebaterConfig(id="pro", provider="test", model="pro"),
-        con_model=DebaterConfig(id="con", provider="test", model="con"),
+        pro_model=DebaterConfig(strategy="", id="pro", provider="test", model="pro"),
+        con_model=DebaterConfig(strategy="", id="con", provider="test", model="con"),
         rounds=1,
         turns=[],
     )
@@ -84,7 +84,7 @@ def test_judge_debate_records_parse_error_instead_of_raising() -> None:
     judgement = judge_debate(
         client=BadJsonClient(),
         transcript=_transcript(),
-        judge_model=JudgeModelConfig(id="judge", provider="test", model="judge"),
+        judge_model=JudgeModelConfig(style="", id="judge", provider="test", model="judge"),
         prompt_set=_PROMPT_SET,
     )
 
@@ -102,7 +102,7 @@ def test_judge_debate_repairs_bad_json() -> None:
     judgement = judge_debate(
         client=client,
         transcript=_transcript(),
-        judge_model=JudgeModelConfig(id="judge", provider="test", model="judge"),
+        judge_model=JudgeModelConfig(style="", id="judge", provider="test", model="judge"),
         judging_config=JudgingConfig(repair_retries=1, parse_retries=0),
         prompt_set=_PROMPT_SET,
     )

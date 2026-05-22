@@ -15,13 +15,18 @@ def _write_debater(path: Path, *, api_key_env: str | None = None, **overrides) -
     lines = [f"{k}: {v}" for k, v in fields.items()]
     if api_key_env:
         lines.append(f"api_key_env: {api_key_env}")
+    if "strategy" not in fields:
+        lines.append('strategy: ""')
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _write_judge(path: Path, **overrides) -> None:
     fields = {"id": "judge", "provider": "test", "model": "test-judge"}
     fields.update(overrides)
-    path.write_text("\n".join(f"{k}: {v}" for k, v in fields.items()), encoding="utf-8")
+    lines = [f"{k}: {v}" for k, v in fields.items()]
+    if "style" not in fields:
+        lines.append('style: ""')
+    path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def _setup_run_dir(tmp_path: Path, *, debaters=("debater",), judges=("judge",)) -> Path:

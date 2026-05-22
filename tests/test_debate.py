@@ -25,9 +25,9 @@ class StubClient:
 
 def test_debate_pairings_includes_self_debates_by_default() -> None:
     models = [
-        DebaterConfig(id="a", provider="test", model="a"),
-        DebaterConfig(id="b", provider="test", model="b"),
-        DebaterConfig(id="c", provider="test", model="c"),
+        DebaterConfig(strategy="", id="a", provider="test", model="a"),
+        DebaterConfig(strategy="", id="b", provider="test", model="b"),
+        DebaterConfig(strategy="", id="c", provider="test", model="c"),
     ]
 
     assert [(pro.id, con.id) for pro, con in debate_pairings(models)] == [
@@ -45,9 +45,9 @@ def test_debate_pairings_includes_self_debates_by_default() -> None:
 
 def test_debate_pairings_can_skip_self_debates() -> None:
     models = [
-        DebaterConfig(id="a", provider="test", model="a"),
-        DebaterConfig(id="b", provider="test", model="b"),
-        DebaterConfig(id="c", provider="test", model="c"),
+        DebaterConfig(strategy="", id="a", provider="test", model="a"),
+        DebaterConfig(strategy="", id="b", provider="test", model="b"),
+        DebaterConfig(strategy="", id="c", provider="test", model="c"),
     ]
 
     assert [
@@ -65,8 +65,8 @@ def test_debate_pairings_can_skip_self_debates() -> None:
 
 def test_run_debate_produces_three_rounds_per_side() -> None:
     topic = TopicConfig(id="topic", motion="Motion text")
-    pro = DebaterConfig(id="model_a", provider="test", model="a")
-    con = DebaterConfig(id="model_b", provider="test", model="b")
+    pro = DebaterConfig(strategy="", id="model_a", provider="test", model="a")
+    con = DebaterConfig(strategy="", id="model_b", provider="test", model="b")
     client = StubClient()
 
     transcript = run_debate(
