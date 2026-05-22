@@ -8,7 +8,7 @@ import click
 
 from tdec.config import load_tournament_config
 from tdec.env import load_env_file
-from tdec.models import LiteLLMClient
+from tdec.models import build_chat_model
 from tdec.tournament import run_tournament
 from tdec.viewer import export_html, serve as serve_viewer
 
@@ -51,7 +51,7 @@ def run(
     config = load_tournament_config(config_path)
     result = run_tournament(
         config=config,
-        client=LiteLLMClient(),
+        chat_factory=build_chat_model,
         output_dir=output_dir,
         artifact_verbosity=artifact_verbosity,
         workers=workers,

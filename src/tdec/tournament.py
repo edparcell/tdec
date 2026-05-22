@@ -21,7 +21,7 @@ from tdec.config import ModelConfig, TournamentConfig
 from tdec.debate import debate_pairings, run_debate
 from tdec.debate_types import DebateTranscript, Judgement, TournamentError
 from tdec.judging import judge_debate
-from tdec.models import ChatModel, ModelCallError
+from tdec.models import ChatModelFactory, ModelCallError
 
 ELO_K = 32
 STARTING_ELO = 1500.0
@@ -55,7 +55,7 @@ class JudgementJob:
 def run_tournament(
     *,
     config: TournamentConfig,
-    client: ChatModel,
+    chat_factory: ChatModelFactory,
     output_dir: Path | None = None,
     artifact_verbosity: ArtifactVerbosity = "compact",
     workers: int | None = None,
@@ -72,7 +72,7 @@ def run_tournament(
         futures = {
             executor.submit(
                 run_debate,
-                client=client,
+                chat_factory=chat_factory,
                 topic=config.topics[job.topic_index],
                 pro_model=_model_by_id(config.debaters, job.pro_model_id),
                 con_model=_model_by_id(config.debaters, job.con_model_id),
@@ -107,7 +107,7 @@ def run_tournament(
         futures = {
             executor.submit(
                 judge_debate,
-                client=client,
+                chat_factory=chat_factory,
                 transcript=transcript,
                 judge_model=_model_by_id(config.judges, job.judge_model_id),
                 judging_config=config.judging,

@@ -1,21 +1,10 @@
+from langchain_core.messages import BaseMessage
+
 from tdec.config import ModelConfig, TopicConfig
 from tdec.debate import debate_pairings, run_debate
-from tdec.debate_types import (
-    DebateTranscript,
-    DebateTurn,
-    ModelCallMetrics,
-    ModelCallResult,
-    TokenUsage,
-)
+from tdec.debate_types import DebateTranscript, DebateTurn
 
-
-class StubClient:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        self.calls.append((model.id, messages[-1]["content"]))
-        return _call_result(model, f"{model.id} response {len(self.calls)}")
+from tests._fakes import fake_ai, fake_factory
 
 
 def test_debate_pairings_includes_self_debates_by_default() -> None:
@@ -67,10 +56,22 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
     )
     pro = ModelConfig(id="model_a", provider="test", model="a")
     con = ModelConfig(id="model_b", provider="test", model="b")
-    client = StubClient()
+
+    calls: list[tuple[str, str]] = []
+    counter = {"n": 0}
+
+    def respond(model_id: str, messages: list[BaseMessage]):
+        counter["n"] += 1
+        last_human = messages[-1].content
+        calls.append((model_id, str(last_human)))
+        return fake_ai(
+            f"{model_id} response {counter['n']}",
+            cost_usd=0.001,
+            latency=0.25,
+        )
 
     transcript = run_debate(
-        client=client,
+        chat_factory=fake_factory(respond),
         topic=topic,
         pro_model=pro,
         con_model=con,
@@ -83,8 +84,8 @@ def test_run_debate_produces_three_rounds_per_side() -> None:
     assert [turn.turn_number for turn in transcript.turns] == [1, 1, 2, 2, 3, 3]
     assert transcript.turns[0].metrics is not None
     assert transcript.turns[0].metrics.cost_usd == 0.001
-    assert "Go wide" in client.calls[0][1]
-    assert "Motion text" in client.calls[1][1]
+    assert "Go wide" in calls[0][1]
+    assert "Motion text" in calls[1][1]
 
 
 def test_transcript_artifact_redacts_api_keys() -> None:
@@ -115,17 +116,3 @@ def test_transcript_artifact_redacts_api_keys() -> None:
 
     assert data["pro_model"]["api_key"] == "<redacted>"
     assert data["con_model"]["api_key"] == "<redacted>"
-
-
-def _call_result(model: ModelConfig, content: str) -> ModelCallResult:
-    return ModelCallResult(
-        content=content,
-        metrics=ModelCallMetrics(
-            model_id=model.id,
-            provider=model.provider,
-            model=model.model,
-            latency_seconds=0.25,
-            usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-            cost_usd=0.001,
-        ),
-    )

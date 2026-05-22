@@ -3,127 +3,115 @@ import json
 import threading
 import time
 
+import pytest
+from langchain_core.messages import BaseMessage
+
 from tdec.config import JudgingConfig, ModelConfig, RunConfig, TopicConfig, TournamentConfig
-from tdec.debate_types import ModelCallMetrics, ModelCallResult, TokenUsage
 from tdec.models import ModelCallError
 from tdec.tournament import run_tournament
 
+from tests._fakes import fake_ai, fake_factory
 
-class StubClient:
-    def __init__(self) -> None:
-        self.calls = 0
-        self.judge_calls = 0
 
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        self.calls += 1
-        if model.id.startswith("judge"):
-            self.judge_calls += 1
-            winner = "pro" if self.judge_calls <= 6 else "con"
+def _stub_state():
+    """Standard StubClient behaviour: text for debaters, JSON for judges.
+
+    The first 6 judge invocations vote pro; later ones vote con — matches the
+    legacy fixture so the existing tournament assertions still pass.
+    """
+    state = {"judge_calls": 0}
+
+    def respond(model_id: str, _messages: list[BaseMessage]):
+        if model_id.startswith("judge"):
+            state["judge_calls"] += 1
+            winner = "pro" if state["judge_calls"] <= 6 else "con"
             winner_label = "A" if winner == "pro" else "B"
-            return self._result(
-                model,
-                f'{{"winner": "{winner}", "winner_label": "{winner_label}", "confidence": 0.7}}',
-            )
-        return self._result(model, f"{model.id} debate response")
+            content = f'{{"winner": "{winner}", "winner_label": "{winner_label}", "confidence": 0.7}}'
+            return fake_ai(content)
+        return fake_ai(f"{model_id} debate response")
 
-    def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
-        return ModelCallResult(
-            content=content,
-            metrics=ModelCallMetrics(
-                model_id=model.id,
-                provider=model.provider,
-                model=model.model,
-                latency_seconds=1.0,
-                usage=TokenUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-                cost_usd=0.01,
-            ),
-        )
+    return respond
 
 
-class UnknownCostClient(StubClient):
-    def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
-        result = super()._result(model, content)
-        return ModelCallResult(
-            content=result.content,
-            metrics=ModelCallMetrics(
-                model_id=result.metrics.model_id,
-                provider=result.metrics.provider,
-                model=result.metrics.model,
-                latency_seconds=result.metrics.latency_seconds,
-                usage=result.metrics.usage,
-                cost_usd=None,
-                cost_error="missing price",
-            ),
-        )
+def _unknown_cost_responder():
+    base = _stub_state()
+
+    def respond(model_id, messages):
+        ai = base(model_id, messages)
+        ai.additional_kwargs["tdec_cost_usd"] = None
+        ai.additional_kwargs["tdec_cost_error"] = "missing price"
+        return ai
+
+    return respond
 
 
-class FailingDebateClient(StubClient):
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        raise ModelCallError(model, RuntimeError("provider unavailable api_key=sk-secret123456"))
+def _failing_debate_responder():
+    def respond(_model_id, _messages):
+        raise RuntimeError("provider unavailable api_key=sk-secret123456")
+
+    return respond
 
 
-class FailingJudgeClient(StubClient):
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        if model.id.startswith("judge"):
-            raise ModelCallError(model, RuntimeError("provider unavailable"))
-        return super().call(model, messages)
+def _failing_judge_responder():
+    base = _stub_state()
+
+    def respond(model_id, messages):
+        if model_id.startswith("judge"):
+            raise RuntimeError("provider unavailable")
+        return base(model_id, messages)
+
+    return respond
 
 
-class MetadataClient(StubClient):
-    def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
-        result = super()._result(model, content)
-        return ModelCallResult(
-            content=content,
-            metrics=ModelCallMetrics(
-                model_id=result.metrics.model_id,
-                provider=result.metrics.provider,
-                model=result.metrics.model,
-                latency_seconds=result.metrics.latency_seconds,
-                usage=result.metrics.usage,
-                cost_usd=result.metrics.cost_usd,
-                response_metadata={
-                    "id": "response-id",
-                    "model": model.model,
-                    "provider": model.provider,
-                    "choices": [
-                        {
-                            "finish_reason": "stop",
-                            "index": 0,
-                            "message": {
-                                "content": content,
-                                "role": "assistant",
-                                "reasoning_content": "one kept reasoning copy",
-                                "provider_specific_fields": {
-                                    "reasoning": "duplicate reasoning",
-                                    "reasoning_content": "duplicate reasoning",
-                                    "reasoning_details": [
-                                        {"type": "reasoning.encrypted", "data": "encrypted"}
-                                    ],
-                                },
-                            },
-                        }
-                    ],
-                },
-            ),
-        )
+def _metadata_responder(*, blank: bool = False):
+    base = _stub_state()
+
+    def respond(model_id, messages):
+        ai = base(model_id, messages)
+        content = "" if blank else str(ai.content)
+        provider = "test"
+        # Mimic litellm's completion response shape so the artifacts compactor
+        # has something representative to chew on.
+        ai.response_metadata = {
+            "id": "response-id",
+            "model": model_id,
+            "provider": provider,
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "index": 0,
+                    "message": {
+                        "content": content,
+                        "role": "assistant",
+                        "reasoning_content": "one kept reasoning copy",
+                        "provider_specific_fields": {
+                            "reasoning": "duplicate reasoning",
+                            "reasoning_content": "duplicate reasoning",
+                            "reasoning_details": [
+                                {"type": "reasoning.encrypted", "data": "encrypted"}
+                            ],
+                        },
+                    },
+                }
+            ],
+        }
+        if blank:
+            ai.content = ""
+        return ai
+
+    return respond
 
 
-class BlankMetadataClient(MetadataClient):
-    def _result(self, model: ModelConfig, content: str) -> ModelCallResult:
-        return super()._result(model, "")
+def _thread_recording_responder(thread_ids: set[int], lock: threading.Lock):
+    base = _stub_state()
 
-
-class ThreadRecordingClient(StubClient):
-    def __init__(self) -> None:
-        super().__init__()
-        self.thread_ids: set[int] = set()
-        self.lock = threading.Lock()
-
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        with self.lock:
-            self.thread_ids.add(threading.get_ident())
+    def respond(model_id, messages):
+        with lock:
+            thread_ids.add(threading.get_ident())
         time.sleep(0.02)
-        return self._result(model, f"{model.id} debate response")
+        return base(model_id, messages)
+
+    return respond
 
 
 def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) -> None:
@@ -154,11 +142,11 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=StubClient())
+    summary = run_tournament(config=config, chat_factory=fake_factory(_stub_state()))
     run_dir = Path(summary["run_dir"])
 
     assert len(summary["debates"]) == 6
-    assert summary["total_cost_usd"] == 0.24
+    assert summary["total_cost_usd"] == pytest.approx(0.24)
     assert summary["errors"] == []
     assert summary["total_latency_seconds"] == 24.0
     assert summary["motions"] == [
@@ -255,8 +243,8 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
     assert debater_elos["a"] > debater_elos["b"] > debater_elos["c"]
     assert all(debate["judgement_count"] == 2 for debate in summary["debates"])
     assert all(debate["parse_errors"] == 0 for debate in summary["debates"])
-    assert all(debate["debate_cost_usd"] == 0.02 for debate in summary["debates"])
-    assert all(debate["judging_cost_usd"] == 0.02 for debate in summary["debates"])
+    assert all(debate["debate_cost_usd"] == pytest.approx(0.02) for debate in summary["debates"])
+    assert all(debate["judging_cost_usd"] == pytest.approx(0.02) for debate in summary["debates"])
     assert len(list((run_dir / "debates").glob("*.json"))) == 6
     assert len(list((run_dir / "judgements").glob("*.json"))) == 12
     assert (run_dir / "summary.json").is_file()
@@ -278,7 +266,7 @@ def test_run_tournament_includes_self_debates_by_default(tmp_path: Path) -> None
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=StubClient())
+    summary = run_tournament(config=config, chat_factory=fake_factory(_stub_state()))
 
     assert [pair["debate_id"] for pair in summary["pairs"]] == [
         "topic__a_pro__a_con",
@@ -312,12 +300,16 @@ def test_run_tournament_uses_thread_pool_workers(tmp_path: Path) -> None:
         judges=[],
         judging=JudgingConfig(),
     )
-    client = ThreadRecordingClient()
+    thread_ids: set[int] = set()
+    lock = threading.Lock()
 
-    summary = run_tournament(config=config, client=client)
+    summary = run_tournament(
+        config=config,
+        chat_factory=fake_factory(_thread_recording_responder(thread_ids, lock)),
+    )
 
     assert len(summary["debates"]) == 6
-    assert len(client.thread_ids) > 1
+    assert len(thread_ids) > 1
 
 
 def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
@@ -339,7 +331,10 @@ def test_run_tournament_marks_total_cost_unknown_when_component_cost_is_unknown(
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=UnknownCostClient())
+    summary = run_tournament(
+        config=config,
+        chat_factory=fake_factory(_unknown_cost_responder()),
+    )
 
     assert summary["total_cost_usd"] is None
     assert summary["cost_errors"]
@@ -362,7 +357,10 @@ def test_run_tournament_skips_failed_debates_and_logs_errors(tmp_path: Path) -> 
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=FailingDebateClient())
+    summary = run_tournament(
+        config=config,
+        chat_factory=fake_factory(_failing_debate_responder()),
+    )
     run_dir = Path(summary["run_dir"])
 
     assert summary["debates"] == []
@@ -391,7 +389,10 @@ def test_run_tournament_skips_failed_judgements_and_logs_errors(tmp_path: Path) 
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=FailingJudgeClient())
+    summary = run_tournament(
+        config=config,
+        chat_factory=fake_factory(_failing_judge_responder()),
+    )
     run_dir = Path(summary["run_dir"])
 
     assert len(summary["debates"]) == 2
@@ -419,7 +420,10 @@ def test_default_artifacts_compact_duplicate_response_metadata(tmp_path: Path) -
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=MetadataClient())
+    summary = run_tournament(
+        config=config,
+        chat_factory=fake_factory(_metadata_responder()),
+    )
     run_dir = Path(summary["run_dir"])
     debate_path = next((run_dir / "debates").glob("*.json"))
     data = json.loads(debate_path.read_text(encoding="utf-8"))
@@ -450,7 +454,10 @@ def test_blank_content_preserves_full_response_metadata_by_default(tmp_path: Pat
         judging=JudgingConfig(),
     )
 
-    summary = run_tournament(config=config, client=BlankMetadataClient())
+    summary = run_tournament(
+        config=config,
+        chat_factory=fake_factory(_metadata_responder(blank=True)),
+    )
     run_dir = Path(summary["run_dir"])
     debate_path = next((run_dir / "debates").glob("*.json"))
     data = json.loads(debate_path.read_text(encoding="utf-8"))
@@ -459,3 +466,10 @@ def test_blank_content_preserves_full_response_metadata_by_default(tmp_path: Pat
     assert data["turns"][0]["content"] == ""
     assert message["content"] == ""
     assert message["provider_specific_fields"]["reasoning_details"][0]["data"] == "encrypted"
+
+
+def test_modelcallerror_propagates_from_fake() -> None:
+    # Sanity check that the test fakes can also raise ModelCallError directly.
+    model = ModelConfig(id="x", provider="test", model="x")
+    raised = ModelCallError(model, RuntimeError("boom"))
+    assert "x (test/x) call failed: boom" in str(raised)

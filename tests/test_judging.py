@@ -1,11 +1,10 @@
+from langchain_core.messages import BaseMessage
+
 from tdec.config import JudgingConfig, ModelConfig, TopicConfig
-from tdec.debate_types import (
-    DebateTranscript,
-    ModelCallMetrics,
-    ModelCallResult,
-    TokenUsage,
-)
+from tdec.debate_types import DebateTranscript
 from tdec.judging import judge_debate, parse_json_response
+
+from tests._fakes import fake_ai, fake_factory
 
 
 def test_parse_json_response_accepts_plain_json() -> None:
@@ -20,50 +19,6 @@ def test_parse_json_response_extracts_json_from_text() -> None:
     assert parsed == {"winner": "con"}
 
 
-class BadJsonClient:
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        return ModelCallResult(
-            content='{"winner": "pro", "summary": "unterminated',
-            metrics=ModelCallMetrics(
-                model_id=model.id,
-                provider=model.provider,
-                model=model.model,
-                latency_seconds=0.5,
-                usage=TokenUsage(prompt_tokens=10, completion_tokens=4, total_tokens=14),
-                cost_usd=None,
-                cost_error="missing price",
-            ),
-        )
-
-
-class RepairJsonClient:
-    def __init__(self) -> None:
-        self.calls: list[list[dict[str, str]]] = []
-
-    def call(self, model: ModelConfig, messages: list[dict[str, str]]) -> ModelCallResult:
-        self.calls.append(messages)
-        content = (
-            '{"winner": "con", "winner_label": "B", "confidence": 0.6}'
-            if len(self.calls) == 2
-            else '{"winner": "con", "summary": "unterminated'
-        )
-        return _result(model, content)
-
-
-def _result(model: ModelConfig, content: str) -> ModelCallResult:
-    return ModelCallResult(
-        content=content,
-        metrics=ModelCallMetrics(
-            model_id=model.id,
-            provider=model.provider,
-            model=model.model,
-            latency_seconds=0.5,
-            usage=TokenUsage(prompt_tokens=10, completion_tokens=4, total_tokens=14),
-            cost_usd=0.001,
-        ),
-    )
-
-
 def test_judge_debate_records_parse_error_instead_of_raising() -> None:
     transcript = DebateTranscript(
         id="debate",
@@ -74,8 +29,18 @@ def test_judge_debate_records_parse_error_instead_of_raising() -> None:
         turns=[],
     )
 
+    def respond(_model_id: str, _messages: list[BaseMessage]):
+        return fake_ai(
+            '{"winner": "pro", "summary": "unterminated',
+            cost_usd=None,
+            cost_error="missing price",
+            latency=0.5,
+            prompt_tokens=10,
+            completion_tokens=4,
+        )
+
     judgement = judge_debate(
-        client=BadJsonClient(),
+        chat_factory=fake_factory(respond),
         transcript=transcript,
         judge_model=ModelConfig(id="judge", provider="test", model="judge"),
     )
@@ -97,10 +62,29 @@ def test_judge_debate_repairs_bad_json() -> None:
         rounds=1,
         turns=[],
     )
-    client = RepairJsonClient()
+
+    calls: list[list[BaseMessage]] = []
+
+    def respond(_model_id: str, messages: list[BaseMessage]):
+        calls.append(list(messages))
+        if len(calls) == 2:
+            return fake_ai(
+                '{"winner": "con", "winner_label": "B", "confidence": 0.6}',
+                cost_usd=0.001,
+                latency=0.5,
+                prompt_tokens=10,
+                completion_tokens=4,
+            )
+        return fake_ai(
+            '{"winner": "con", "summary": "unterminated',
+            cost_usd=0.001,
+            latency=0.5,
+            prompt_tokens=10,
+            completion_tokens=4,
+        )
 
     judgement = judge_debate(
-        client=client,
+        chat_factory=fake_factory(respond),
         transcript=transcript,
         judge_model=ModelConfig(id="judge", provider="test", model="judge"),
         judging_config=JudgingConfig(repair_retries=1, parse_retries=0),
@@ -109,4 +93,4 @@ def test_judge_debate_repairs_bad_json() -> None:
     assert judgement.parsed["winner"] == "con"
     assert judgement.attempts is not None
     assert [attempt.kind for attempt in judgement.attempts] == ["initial", "repair"]
-    assert "not valid JSON" in client.calls[1][-1]["content"]
+    assert "not valid JSON" in str(calls[1][-1].content)
