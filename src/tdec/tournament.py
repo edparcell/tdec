@@ -65,9 +65,16 @@ def run_tournament(
     output_dir: Path | None = None,
     artifact_verbosity: ArtifactVerbosity = "compact",
     workers: int | None = None,
+    resume_dir: Path | None = None,
 ) -> TournamentResult:
-    base_output_dir = output_dir or config.run.output_dir
-    run_dir = make_run_dir(base_output_dir, config.run.name)
+    if resume_dir is not None:
+        run_dir = resume_dir
+        (run_dir / "debates").mkdir(exist_ok=True)
+        (run_dir / "judgements").mkdir(exist_ok=True)
+        (run_dir / "errors").mkdir(exist_ok=True)
+    else:
+        base_output_dir = output_dir or config.run.output_dir
+        run_dir = make_run_dir(base_output_dir, config.run.name)
     errors: list[TournamentError] = []
     worker_count = config.run.workers if workers is None else workers
     if worker_count < 1:
@@ -77,47 +84,43 @@ def run_tournament(
     opening_cache = OpeningCache() if config.run.reuse_openings else None
     debate_fn = run_parallel_debate if config.run.parallel_rounds else run_debate
 
-    debate_results: list[tuple[int, DebateTranscript]] = []
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {
-            executor.submit(
-                debate_fn,
-                client=client,
-                topic=config.topics[job.topic_index],
-                pro_model=_debater_by_id(config.debaters, job.pro_model_id),
-                con_model=_debater_by_id(config.debaters, job.con_model_id),
-                rounds=config.run.rounds,
-                prompt_set=prompt_set,
-                opening_cache=opening_cache,
-            ): job
-            for job in _debate_jobs(config)
-        }
-        for future in as_completed(futures):
-            job = futures[future]
-            try:
-                transcript = future.result()
-            except ModelCallError as e:
-                error = _tournament_error(
-                    stage="debate",
-                    topic_id=job.topic_id,
-                    debate_id=job.debate_id,
-                    pro_model_id=job.pro_model_id,
-                    con_model_id=job.con_model_id,
-                    judge_model_id=None,
-                    exc=e,
-                )
-                errors.append(error)
-                write_error(run_dir, error, len(errors))
-                continue
-            debate_results.append((job.index, transcript))
-            write_debate(run_dir, transcript, artifact_verbosity=artifact_verbosity)
+    existing_debates = {f.stem for f in (run_dir / "debates").glob("*.json")}
+    all_jobs = _debate_jobs(config)
+    pending_jobs = [j for j in all_jobs if j.debate_id not in existing_debates]
+    if pending_jobs and len(pending_jobs) < len(all_jobs):
+        click.echo(f"Resuming: {len(existing_debates)} debates exist, {len(pending_jobs)} remaining.")
 
-    debates = [transcript for _, transcript in sorted(debate_results, key=lambda item: item[0])]
+    debate_results, debate_errors = _run_debate_batch(
+        jobs=pending_jobs,
+        config=config,
+        debate_fn=debate_fn,
+        client=client,
+        prompt_set=prompt_set,
+        opening_cache=opening_cache,
+        run_dir=run_dir,
+        artifact_verbosity=artifact_verbosity,
+        workers=worker_count,
+        api_retries=config.run.debate_api_retries,
+    )
+    errors.extend(debate_errors)
+
+    debates = load_debate_transcripts(run_dir)
 
     judge_lookup = {j.id: j for j in config.judges}
     all_judge_jobs = _judgement_jobs(debates, config)
+    existing_judge_keys = existing_judgement_keys(run_dir)
+    pending_judge_jobs = [
+        (job, transcript)
+        for job, transcript in all_judge_jobs
+        if (job.debate_id, job.judge_model_id) not in existing_judge_keys
+    ]
+    if pending_judge_jobs and len(pending_judge_jobs) < len(all_judge_jobs):
+        click.echo(
+            f"Resuming: {len(existing_judge_keys)} judgements exist, "
+            f"{len(pending_judge_jobs)} remaining."
+        )
     judgement_results, judge_errors = _run_judgement_batch(
-        jobs=all_judge_jobs,
+        jobs=pending_judge_jobs,
         judge_lookup=judge_lookup,
         judging_config=config.judging,
         client=client,
@@ -129,11 +132,9 @@ def run_tournament(
     )
     errors.extend(judge_errors)
 
-    judgements = [
-        judgement for _, judgement in sorted(judgement_results, key=lambda item: item[0])
-    ]
+    all_judgements = load_all_judgements(run_dir)
 
-    summary = summarize(run_dir, debates, judgements, errors)
+    summary = summarize(run_dir, debates, all_judgements, errors)
     write_summary(run_dir, summary)
     return summary
 
@@ -189,6 +190,71 @@ def run_posthoc_judges(
     summary = summarize(run_dir, debates, all_judgements)
     write_summary(run_dir, summary)
     return summary
+
+
+def _run_debate_batch(
+    *,
+    jobs: list[DebateJob],
+    config: TournamentConfig,
+    debate_fn,
+    client: ChatModel,
+    prompt_set: PromptSet,
+    opening_cache: OpeningCache | None,
+    run_dir: Path,
+    artifact_verbosity: ArtifactVerbosity,
+    workers: int,
+    api_retries: int,
+) -> tuple[list[tuple[int, DebateTranscript]], list[TournamentError]]:
+    results: list[tuple[int, DebateTranscript]] = []
+    errors: list[TournamentError] = []
+    pending = list(jobs)
+
+    for attempt in range(1 + api_retries):
+        if not pending:
+            break
+        if attempt > 0:
+            click.echo(f"Retrying {len(pending)} failed debates (attempt {attempt + 1})...")
+
+        failed: list[DebateJob] = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(
+                    debate_fn,
+                    client=client,
+                    topic=config.topics[job.topic_index],
+                    pro_model=_debater_by_id(config.debaters, job.pro_model_id),
+                    con_model=_debater_by_id(config.debaters, job.con_model_id),
+                    rounds=config.run.rounds,
+                    prompt_set=prompt_set,
+                    opening_cache=opening_cache,
+                ): job
+                for job in pending
+            }
+            for future in as_completed(futures):
+                job = futures[future]
+                try:
+                    transcript = future.result()
+                except ModelCallError as e:
+                    if attempt < api_retries:
+                        failed.append(job)
+                    else:
+                        error = _tournament_error(
+                            stage="debate",
+                            topic_id=job.topic_id,
+                            debate_id=job.debate_id,
+                            pro_model_id=job.pro_model_id,
+                            con_model_id=job.con_model_id,
+                            judge_model_id=None,
+                            exc=e,
+                        )
+                        errors.append(error)
+                        write_error(run_dir, error, len(errors))
+                    continue
+                results.append((job.index, transcript))
+                write_debate(run_dir, transcript, artifact_verbosity=artifact_verbosity)
+        pending = failed
+
+    return results, errors
 
 
 def _run_judgement_batch(

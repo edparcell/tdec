@@ -51,6 +51,7 @@ class RunConfig:
     workers: int = 1
     reuse_openings: bool = True
     parallel_rounds: bool = False
+    debate_api_retries: int = 2
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,7 @@ def load_run_config(path: str | Path) -> TournamentConfig:
         workers=_positive_int(run_data.get("workers", 1), "run.workers"),
         reuse_openings=_bool_value(run_data.get("reuse_openings", True)),
         parallel_rounds=_bool_value(run_data.get("parallel_rounds", False)),
+        debate_api_retries=int(run_data.get("debate_api_retries", 2)),
     )
 
     return TournamentConfig(

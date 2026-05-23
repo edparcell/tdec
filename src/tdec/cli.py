@@ -47,12 +47,20 @@ def main() -> None:
     default=False,
     help="Disable pro opening reuse across debates.",
 )
+@click.option(
+    "--resume",
+    "resume_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Resume a previous run, filling in missing debates and judgements.",
+)
 def run(
     config_path: Path,
     output_dir: Path | None,
     artifact_verbosity: str,
     workers: int | None,
     no_reuse_openings: bool,
+    resume_dir: Path | None,
 ) -> None:
     """Run a debate tournament from a YAML config."""
     load_env_file(config_path.parent.parent.parent / ".env")
@@ -66,6 +74,7 @@ def run(
         output_dir=output_dir,
         artifact_verbosity=artifact_verbosity,
         workers=workers,
+        resume_dir=resume_dir,
     )
     click.echo(f"Wrote run to {result['run_dir']}")
 
