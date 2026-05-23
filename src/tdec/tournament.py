@@ -24,7 +24,7 @@ from tdec.artifacts import (
 )
 from tdec.config import DebaterConfig, JudgeModelConfig, JudgeRunConfig, JudgingConfig, TournamentConfig
 from tdec.debate import OpeningCache, debate_pairings, run_debate, run_parallel_debate
-from tdec.debate_types import DebateTranscript, Judgement, TournamentError
+from tdec.debate_types import DebateTranscript, DebateTurn, Judgement, TournamentError
 from tdec.judging import judge_debate
 from tdec.models import ChatModel, ModelCallError
 from tdec.prompts import PromptSet
@@ -198,6 +198,87 @@ def run_posthoc_judges(
 
     all_judgements = load_all_judgements(run_dir)
     summary = summarize(run_dir, debates, all_judgements)
+    write_summary(run_dir, summary)
+    return summary
+
+
+def run_relabel(
+    *,
+    source_dir: Path,
+    judge_config: JudgeRunConfig,
+    client: ChatModel,
+    prompt_set: PromptSet,
+    output_dir: Path,
+    workers: int = 1,
+) -> TournamentResult:
+    from datetime import datetime
+
+    debates = load_debate_transcripts(source_dir)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    source_name = source_dir.name
+    run_dir = output_dir / f"{timestamp}__relabel__{source_name}"
+    (run_dir / "debates").mkdir(parents=True)
+    (run_dir / "judgements").mkdir(parents=True)
+    (run_dir / "errors").mkdir(parents=True)
+
+    swapped_debates = []
+    for debate in debates:
+        swapped_turns = []
+        for turn in debate.turns:
+            swapped_label = "B" if turn.speaker_label == "A" else "A"
+            swapped_turns.append(DebateTurn(
+                speaker_label=swapped_label,
+                speaker_model_id=turn.speaker_model_id,
+                side=turn.side,
+                turn_number=turn.turn_number,
+                content=turn.content,
+                metrics=turn.metrics,
+            ))
+        swapped = DebateTranscript(
+            id=debate.id,
+            topic=debate.topic,
+            pro_model=debate.pro_model,
+            con_model=debate.con_model,
+            rounds=debate.rounds,
+            turns=swapped_turns,
+            debate_mode=debate.debate_mode,
+        )
+        swapped_debates.append(swapped)
+        write_debate(run_dir, swapped)
+
+    click.echo(f"Wrote {len(swapped_debates)} relabeled debates.")
+
+    judge_lookup = {j.id: j for j in judge_config.judges}
+    judge_jobs = []
+    for debate in swapped_debates:
+        for judge_model in judge_config.judges:
+            judge_jobs.append((
+                JudgementJob(
+                    index=len(judge_jobs),
+                    topic_id=debate.topic.id,
+                    debate_id=debate.id,
+                    pro_model_id=debate.pro_model.id,
+                    con_model_id=debate.con_model.id,
+                    judge_model_id=judge_model.id,
+                ),
+                debate,
+            ))
+
+    judgement_results, errors = _run_judgement_batch(
+        jobs=judge_jobs,
+        judge_lookup=judge_lookup,
+        judging_config=judge_config.judging,
+        client=client,
+        prompt_set=prompt_set,
+        run_dir=run_dir,
+        artifact_verbosity="compact",
+        workers=workers,
+        api_retries=judge_config.judging.api_retries,
+    )
+
+    all_judgements = load_all_judgements(run_dir)
+    conditions = {"label_swap": "true", "source_run": source_name}
+    summary = summarize(run_dir, swapped_debates, all_judgements, errors, conditions)
     write_summary(run_dir, summary)
     return summary
 

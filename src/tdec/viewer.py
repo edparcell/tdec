@@ -439,6 +439,38 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
     }
 
 
+def _compute_cross_run_analysis(runs: list[dict]) -> dict | None:
+    if len(runs) < 2:
+        return None
+
+    all_conditions = {}
+    for r in runs:
+        conds = r["summary"].get("conditions", {})
+        for k, v in conds.items():
+            all_conditions.setdefault(k, set()).add(v)
+
+    varying = {k: sorted(v) for k, v in all_conditions.items() if len(v) > 1}
+    if not varying:
+        return {"varying_conditions": {}, "note": "No varying conditions across runs."}
+
+    summaries = []
+    for r in runs:
+        conds = r["summary"].get("conditions", {})
+        for pair in r["summary"].get("pairs", []):
+            summaries.append({
+                "run": r["run_name"],
+                "conditions": conds,
+                "pro_judges": pair["pro_judges"],
+                "con_judges": pair["con_judges"],
+            })
+
+    return {
+        "varying_conditions": {k: list(v) for k, v in varying.items()},
+        "run_count": len(runs),
+        "run_names": [r["run_name"] for r in runs],
+    }
+
+
 def _compute_word_counts(run_dir: Path) -> dict:
     debate_words = 0
     judgement_words = 0
@@ -492,6 +524,7 @@ def serve(
 
     runs = [_load_run_data(rd) for rd in run_dirs]
     active_run = runs[0]
+    cross_run = _compute_cross_run_analysis(runs)
     all_debates_dirs = {rd.name: rd / "debates" for rd in run_dirs}
     all_judgements_dirs = {rd.name: rd / "judgements" for rd in run_dirs}
 
@@ -517,6 +550,7 @@ def serve(
                 "run_name": r["run_name"],
                 "conditions": r["summary"].get("conditions", {}),
             } for r in runs]),
+            cross_run=json.dumps(cross_run),
             inline_css=None,
         )
 
@@ -590,6 +624,7 @@ def export_html(run_dir: Path, output: Path) -> None:
         motion_stats=json.dumps(motion_stats),
         analysis_stats=json.dumps(analysis_stats),
         runs=json.dumps([{"run_name": run_dir.name, "conditions": summary.get("conditions", {})}]),
+        cross_run=json.dumps(None),
         inline_css=css,
     )
     output.write_text(html, encoding="utf-8")

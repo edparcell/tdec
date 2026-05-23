@@ -146,6 +146,52 @@ def judge(
     click.echo(f"Updated summary at {result['run_dir']}")
 
 
+@main.command()
+@click.argument("source_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("judge_config_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--output-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="Output directory for relabeled run (default: runs/).",
+)
+@click.option("--workers", type=click.IntRange(min=1), default=1, show_default=True)
+@click.option(
+    "--prompt-set",
+    "prompt_set_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Prompt-set YAML (default: configs/prompt-sets/default.yaml).",
+)
+def relabel(
+    source_dir: Path,
+    judge_config_path: Path,
+    output_dir: Path | None,
+    workers: int,
+    prompt_set_path: Path | None,
+) -> None:
+    """Create a label-swapped copy of a run and rejudge it."""
+    from tdec.tournament import run_relabel
+
+    load_env_file(judge_config_path.parent / ".env")
+    load_env_file(".env")
+    if prompt_set_path is None:
+        prompt_set_path = Path("configs/prompt-sets/default.yaml")
+    if not prompt_set_path.exists():
+        raise click.ClickException(f"Prompt-set not found: {prompt_set_path}")
+    judge_cfg = load_judge_config(judge_config_path)
+    ps = PromptSet(load_prompt_set_config(prompt_set_path))
+    result = run_relabel(
+        source_dir=source_dir,
+        judge_config=judge_cfg,
+        client=LiteLLMClient(),
+        prompt_set=ps,
+        output_dir=output_dir or Path("runs"),
+        workers=workers,
+    )
+    click.echo(f"Wrote relabeled run to {result['run_dir']}")
+
+
 @main.command("export")
 @click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option(

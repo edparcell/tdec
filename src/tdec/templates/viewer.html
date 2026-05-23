@@ -71,6 +71,7 @@ const JUDGE_STATS = {{ judge_stats|safe }};
 const MOTION_STATS = {{ motion_stats|safe }};
 const ANALYSIS = {{ analysis_stats|safe }};
 const RUNS = {{ runs|safe }};
+const CROSS_RUN = {{ cross_run|safe }};
 
 let activeTopic = null;
 
@@ -699,6 +700,22 @@ function renderAnalysis() {
     if (nonsigRows.length > 0) {
       const parts = nonsigRows.map(r => `${r.source} (${formatPval(r.p_value)})`);
       html += `<div class="analysis-verdict not-significant">Not significant: ${parts.join(', ')}.</div>`;
+    }
+  }
+
+  // Cross-run comparison
+  if (CROSS_RUN && CROSS_RUN.varying_conditions) {
+    const vc = CROSS_RUN.varying_conditions;
+    const keys = Object.keys(vc);
+    if (keys.length > 0) {
+      html += `<div class="section-title">Cross-Run Comparison <span class="help-icon" title="Comparing ${CROSS_RUN.run_count} runs that differ in experimental conditions.">?</span></div>`;
+      html += `<div class="analysis-note"><strong>${CROSS_RUN.run_count} runs loaded</strong> with varying conditions:</div>`;
+      for (const [key, vals] of Object.entries(vc)) {
+        html += `<div class="analysis-note">&bull; <strong>${key}</strong>: ${vals.join(', ')}</div>`;
+      }
+      html += `<div class="analysis-note">Use the run selector above to switch between conditions and compare results across tabs.</div>`;
+    } else if (CROSS_RUN.note) {
+      html += `<div class="analysis-note">${CROSS_RUN.note}</div>`;
     }
   }
 
