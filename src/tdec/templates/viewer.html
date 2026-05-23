@@ -18,13 +18,13 @@
   <div class="motion-bar" id="motion-bar"></div>
 </div>
 
-<div class="tab-bar">
-  <button class="tab-btn active" onclick="switchTab('debates')">Debates</button>
-  <button class="tab-btn" onclick="switchTab('motions')">Motions</button>
+<div class="tab-bar" id="tab-bar">
+  <button class="tab-btn" onclick="switchTab('debates')">Debates</button>
+  <button class="tab-btn" id="motions-tab-btn" onclick="switchTab('motions')">Motions</button>
   <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
 </div>
 
-<div id="tab-debates" class="tab-content active">
+<div id="tab-debates" class="tab-content">
   <div class="main-layout">
     <div class="left-panel" id="left-panel">
       <div id="elo-section"></div>
@@ -527,6 +527,15 @@ function agreementGradient(pct) {
   return 'transparent';
 }
 
+function navigateToTopic(topicId) {
+  const select = document.getElementById('topic-select');
+  if (select) {
+    select.value = topicId;
+    selectTopic(topicId);
+  }
+  switchTab('debates');
+}
+
 // ── Motion results ──
 function renderMotionResults() {
   const section = document.getElementById('motion-results-section');
@@ -549,7 +558,7 @@ function renderMotionResults() {
     const resultClass = m.result === 'carried' ? 'pro' : m.result === 'defeated' ? 'con' : 'tie';
     const proRatio = (m.pro_pct - 50) / 50;
     html += '<tr>';
-    html += `<td style="text-align:left;font-size:12px;white-space:normal;max-width:400px">${escapeHtml(m.motion)}</td>`;
+    html += `<td style="text-align:left;font-size:12px;white-space:normal;max-width:400px"><a class="motion-link" onclick="navigateToTopic('${m.topic_id}')">${escapeHtml(m.motion)}</a></td>`;
     html += `<td><span class="verdict ${resultClass}">${m.result}</span></td>`;
     html += `<td>${m.pro}</td><td>${m.con}</td>`;
     html += `<td style="background:${cellGradient(proRatio)}">${m.pro_pct}%</td>`;
@@ -579,6 +588,14 @@ renderMotionResults();
 renderJudgeVotes();
 renderJudgeDebaterMatrix();
 renderJudgeAgreement();
+
+const topicCount = (SUMMARY.motions || []).length;
+if (topicCount <= 1) {
+  document.getElementById('motions-tab-btn').style.display = 'none';
+  switchTab('debates');
+} else {
+  switchTab('motions');
+}
 if (window.innerWidth > 900) document.getElementById('right-panel').classList.add('active');
 </script>
 </body>
