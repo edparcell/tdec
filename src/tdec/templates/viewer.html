@@ -81,6 +81,7 @@ const RUNS = {{ runs|safe }};
 const CROSS_RUN = {{ cross_run|safe }};
 
 let activeTopic = null;
+let currentRunName = '{{ run_name }}';
 
 // ── Stats bar ──
 function renderStats() {
@@ -132,6 +133,7 @@ function renderRunSelector() {
 
 async function switchRun(runName) {
   try {
+    currentRunName = runName;
     const res = await fetch(`/api/run/${runName}`);
     const data = await res.json();
     // Update all the global data
@@ -373,8 +375,8 @@ async function loadDetail(debateId) {
     } else {
       content.innerHTML = '<div class="loading">Loading</div>';
       const [dr, jr] = await Promise.all([
-        fetch(`/api/debates/${debateId}`),
-        fetch(`/api/judgements/${debateId}`)
+        fetch(`/api/debates/${currentRunName}/${debateId}`),
+        fetch(`/api/judgements/${currentRunName}/${debateId}`)
       ]);
       debate = await dr.json();
       judgements = await jr.json();

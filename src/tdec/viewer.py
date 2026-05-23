@@ -701,20 +701,23 @@ def serve(
                 })
         return JSONResponse({"error": "not found"}, status_code=404)
 
-    @app.get("/api/debates/{debate_id}")
-    async def api_debate(debate_id: str):
-        for debates_dir in all_debates_dirs.values():
-            path = debates_dir / f"{debate_id}.json"
-            if path.exists():
-                return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
-        return JSONResponse({"error": "not found"}, status_code=404)
+    @app.get("/api/debates/{run_name}/{debate_id}")
+    async def api_debate(run_name: str, debate_id: str):
+        debates_dir = all_debates_dirs.get(run_name)
+        if not debates_dir:
+            return JSONResponse({"error": "run not found"}, status_code=404)
+        path = debates_dir / f"{debate_id}.json"
+        if not path.exists():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
 
-    @app.get("/api/judgements/{debate_id}")
-    async def api_judgements(debate_id: str):
-        results = []
-        for judgements_dir in all_judgements_dirs.values():
-            files = sorted(judgements_dir.glob(f"{debate_id}__*.json"))
-            results.extend(json.loads(f.read_text(encoding="utf-8")) for f in files)
+    @app.get("/api/judgements/{run_name}/{debate_id}")
+    async def api_judgements(run_name: str, debate_id: str):
+        judgements_dir = all_judgements_dirs.get(run_name)
+        if not judgements_dir:
+            return JSONResponse({"error": "run not found"}, status_code=404)
+        files = sorted(judgements_dir.glob(f"{debate_id}__*.json"))
+        results = [json.loads(f.read_text(encoding="utf-8")) for f in files]
         return JSONResponse(results)
 
     url = f"http://127.0.0.1:{port}"
