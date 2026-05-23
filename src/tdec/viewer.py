@@ -462,21 +462,40 @@ def _jinja_env() -> jinja2.Environment:
 # ── Server mode ──
 
 
-def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) -> None:
+def _load_run_data(run_dir: Path) -> dict:
+    return {
+        "run_name": run_dir.name,
+        "summary": json.loads((run_dir / "summary.json").read_text(encoding="utf-8")),
+        "topic_motions": _extract_topic_motions(run_dir),
+        "word_counts": _compute_word_counts(run_dir),
+        "judge_stats": _compute_judge_stats(run_dir),
+        "motion_stats": _compute_motion_stats(run_dir),
+        "analysis_stats": _compute_analysis_stats(run_dir),
+    }
+
+
+def serve(
+    run_dir_or_dirs: Path | list[Path],
+    port: int | None = None,
+    *,
+    open_browser: bool = True,
+) -> None:
     import uvicorn
 
     if port is None:
         port = _find_free_port()
 
-    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-    debates_dir = run_dir / "debates"
-    judgements_dir = run_dir / "judgements"
+    if isinstance(run_dir_or_dirs, list):
+        run_dirs = run_dir_or_dirs
+    else:
+        run_dirs = [run_dir_or_dirs]
+
+    runs = [_load_run_data(rd) for rd in run_dirs]
+    active_run = runs[0]
+    all_debates_dirs = {rd.name: rd / "debates" for rd in run_dirs}
+    all_judgements_dirs = {rd.name: rd / "judgements" for rd in run_dirs}
+
     css_text = _STATIC_DIR.joinpath("viewer.css").read_text(encoding="utf-8")
-    topic_motions = _extract_topic_motions(run_dir)
-    word_counts = _compute_word_counts(run_dir)
-    judge_stats = _compute_judge_stats(run_dir)
-    motion_stats = _compute_motion_stats(run_dir)
-    analysis_stats = _compute_analysis_stats(run_dir)
     env = _jinja_env()
     template = env.get_template("viewer.html")
 
@@ -485,15 +504,19 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         return template.render(
-            run_name=run_dir.name,
-            summary=json.dumps(summary),
+            run_name=active_run["run_name"],
+            summary=json.dumps(active_run["summary"]),
             all_debates="null",
             all_judgements="null",
-            topic_motions=json.dumps(topic_motions),
-            word_counts=json.dumps(word_counts),
-            judge_stats=json.dumps(judge_stats),
-            motion_stats=json.dumps(motion_stats),
-            analysis_stats=json.dumps(analysis_stats),
+            topic_motions=json.dumps(active_run["topic_motions"]),
+            word_counts=json.dumps(active_run["word_counts"]),
+            judge_stats=json.dumps(active_run["judge_stats"]),
+            motion_stats=json.dumps(active_run["motion_stats"]),
+            analysis_stats=json.dumps(active_run["analysis_stats"]),
+            runs=json.dumps([{
+                "run_name": r["run_name"],
+                "conditions": r["summary"].get("conditions", {}),
+            } for r in runs]),
             inline_css=None,
         )
 
@@ -501,25 +524,39 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
     async def static_css():
         return Response(content=css_text, media_type="text/css")
 
-    @app.get("/api/summary")
-    async def api_summary():
-        return JSONResponse(summary)
+    @app.get("/api/run/{run_name}")
+    async def api_run(run_name: str):
+        for r in runs:
+            if r["run_name"] == run_name:
+                return JSONResponse({
+                    "summary": r["summary"],
+                    "topic_motions": r["topic_motions"],
+                    "word_counts": r["word_counts"],
+                    "judge_stats": r["judge_stats"],
+                    "motion_stats": r["motion_stats"],
+                    "analysis_stats": r["analysis_stats"],
+                })
+        return JSONResponse({"error": "not found"}, status_code=404)
 
     @app.get("/api/debates/{debate_id}")
     async def api_debate(debate_id: str):
-        path = debates_dir / f"{debate_id}.json"
-        if not path.exists():
-            return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
+        for debates_dir in all_debates_dirs.values():
+            path = debates_dir / f"{debate_id}.json"
+            if path.exists():
+                return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
+        return JSONResponse({"error": "not found"}, status_code=404)
 
     @app.get("/api/judgements/{debate_id}")
     async def api_judgements(debate_id: str):
-        files = sorted(judgements_dir.glob(f"{debate_id}__*.json"))
-        results = [json.loads(f.read_text(encoding="utf-8")) for f in files]
+        results = []
+        for judgements_dir in all_judgements_dirs.values():
+            files = sorted(judgements_dir.glob(f"{debate_id}__*.json"))
+            results.extend(json.loads(f.read_text(encoding="utf-8")) for f in files)
         return JSONResponse(results)
 
     url = f"http://127.0.0.1:{port}"
-    print(f"Serving {run_dir.name} at {url}")
+    names = ", ".join(rd.name for rd in run_dirs)
+    print(f"Serving {names} at {url}")
     print("Press Ctrl+C to stop.")
     if open_browser:
         webbrowser.open(url)
@@ -552,6 +589,7 @@ def export_html(run_dir: Path, output: Path) -> None:
         judge_stats=json.dumps(judge_stats),
         motion_stats=json.dumps(motion_stats),
         analysis_stats=json.dumps(analysis_stats),
+        runs=json.dumps([{"run_name": run_dir.name, "conditions": summary.get("conditions", {})}]),
         inline_css=css,
     )
     output.write_text(html, encoding="utf-8")

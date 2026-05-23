@@ -15,6 +15,7 @@
 <div class="header">
   <h1>TDEC <span class="run-name">{{ run_name }}</span></h1>
   <div class="stats-bar" id="stats-bar"></div>
+  <div id="run-selector-bar"></div>
   <div class="motion-bar" id="motion-bar"></div>
 </div>
 
@@ -69,6 +70,7 @@ const WORD_COUNTS = {{ word_counts|safe }};
 const JUDGE_STATS = {{ judge_stats|safe }};
 const MOTION_STATS = {{ motion_stats|safe }};
 const ANALYSIS = {{ analysis_stats|safe }};
+const RUNS = {{ runs|safe }};
 
 let activeTopic = null;
 
@@ -104,6 +106,55 @@ function formatCount(n) {
 }
 
 function wordCount(text) { return text ? text.split(/\s+/).filter(Boolean).length : 0; }
+
+// ── Run selector ──
+function renderRunSelector() {
+  const bar = document.getElementById('run-selector-bar');
+  if (!RUNS || RUNS.length <= 1) return;
+  let html = '<select class="topic-select" id="run-select" onchange="switchRun(this.value)" style="margin-top:8px">';
+  for (const r of RUNS) {
+    const conds = Object.entries(r.conditions || {}).map(([k,v]) => `${k}=${v}`).join(', ');
+    const label = r.run_name + (conds ? ` (${conds})` : '');
+    const selected = r.run_name === '{{ run_name }}' ? ' selected' : '';
+    html += `<option value="${r.run_name}"${selected}>${escapeHtml(label)}</option>`;
+  }
+  html += '</select>';
+  bar.innerHTML = html;
+}
+
+async function switchRun(runName) {
+  try {
+    const res = await fetch(`/api/run/${runName}`);
+    const data = await res.json();
+    // Update all the global data
+    Object.assign(SUMMARY, data.summary);
+    Object.assign(TOPIC_MOTIONS, data.topic_motions);
+    Object.assign(WORD_COUNTS, data.word_counts);
+    Object.assign(JUDGE_STATS, data.judge_stats);
+    Object.assign(MOTION_STATS, data.motion_stats);
+    Object.assign(ANALYSIS, data.analysis_stats);
+    // Re-render everything
+    renderStats();
+    renderMotionBar();
+    renderElo();
+    buildMatrix();
+    renderMotionResults();
+    renderJudgeVotes();
+    renderJudgeDebaterMatrix();
+    renderJudgeAgreement();
+    renderAnalysis();
+    const tc = (SUMMARY.motions || []).length;
+    if (tc <= 1) {
+      document.getElementById('motions-tab-btn').style.display = 'none';
+      switchTab('debates');
+    } else {
+      document.getElementById('motions-tab-btn').style.display = '';
+      switchTab('motions');
+    }
+  } catch (e) {
+    console.error('Failed to switch run:', e);
+  }
+}
 
 // ── Motion bar ──
 function renderMotionBar() {
@@ -720,6 +771,7 @@ function renderMotionResults() {
 
 // ── Init ──
 renderStats();
+renderRunSelector();
 renderMotionBar();
 renderElo();
 buildMatrix();

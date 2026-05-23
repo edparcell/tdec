@@ -80,15 +80,18 @@ def run(
 
 
 @main.command()
-@click.argument("run_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("run_dirs", nargs=-1, type=click.Path(exists=True, file_okay=False, path_type=Path))
 @click.option("--port", type=int, default=None, help="Port to serve on (default: auto).")
 @click.option("--open", "open_browser", is_flag=True, default=False, help="Auto-open the browser.")
-def view(run_dir: Path, port: int | None, open_browser: bool) -> None:
-    """View a tournament run in the browser."""
-    summary_path = run_dir / "summary.json"
-    if not summary_path.exists():
-        raise click.ClickException(f"No summary.json found in {run_dir}")
-    serve_viewer(run_dir, port=port, open_browser=open_browser)
+def view(run_dirs: tuple[Path, ...], port: int | None, open_browser: bool) -> None:
+    """View one or more tournament runs in the browser."""
+    if not run_dirs:
+        raise click.ClickException("At least one run directory is required.")
+    for rd in run_dirs:
+        if not (rd / "summary.json").exists():
+            raise click.ClickException(f"No summary.json found in {rd}")
+    dirs = list(run_dirs)
+    serve_viewer(dirs if len(dirs) > 1 else dirs[0], port=port, open_browser=open_browser)
 
 
 @main.command()
