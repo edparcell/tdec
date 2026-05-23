@@ -20,6 +20,7 @@
 
 <div class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('debates')">Debates</button>
+  <button class="tab-btn" onclick="switchTab('motions')">Motions</button>
   <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
 </div>
 
@@ -38,6 +39,12 @@
   </div>
 </div>
 
+<div id="tab-motions" class="tab-content">
+  <div class="judges-panel">
+    <div id="motion-results-section"></div>
+  </div>
+</div>
+
 <div id="tab-judges" class="tab-content">
   <div class="judges-panel">
     <div id="judge-votes-section"></div>
@@ -53,6 +60,7 @@ const ALL_JUDGEMENTS = {{ all_judgements|safe }};
 const TOPIC_MOTIONS = {{ topic_motions|safe }};
 const WORD_COUNTS = {{ word_counts|safe }};
 const JUDGE_STATS = {{ judge_stats|safe }};
+const MOTION_STATS = {{ motion_stats|safe }};
 
 let activeTopic = null;
 
@@ -519,11 +527,55 @@ function agreementGradient(pct) {
   return 'transparent';
 }
 
+// ── Motion results ──
+function renderMotionResults() {
+  const section = document.getElementById('motion-results-section');
+  const ms = MOTION_STATS;
+  if (!ms || !ms.motions || ms.motions.length <= 1) {
+    section.innerHTML = '<div class="detail-placeholder">Single-topic run. Use the Debates tab.</div>';
+    return;
+  }
+
+  const judges = ms.judge_ids;
+  const rows = [...ms.motions].sort((a, b) => b.pro_pct - a.pro_pct);
+
+  let html = '<div class="section-title">Results by Motion</div>';
+  html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+  html += '<tr><th style="text-align:left;min-width:300px">Motion</th><th>Result</th><th>Pro</th><th>Con</th><th>Pro %</th>';
+  for (const jid of judges) html += `<th>${shortName(jid)}</th>`;
+  html += '</tr>';
+
+  for (const m of rows) {
+    const resultClass = m.result === 'carried' ? 'pro' : m.result === 'defeated' ? 'con' : 'tie';
+    const proRatio = (m.pro_pct - 50) / 50;
+    html += '<tr>';
+    html += `<td style="text-align:left;font-size:12px;white-space:normal;max-width:400px">${escapeHtml(m.motion)}</td>`;
+    html += `<td><span class="verdict ${resultClass}">${m.result}</span></td>`;
+    html += `<td>${m.pro}</td><td>${m.con}</td>`;
+    html += `<td style="background:${cellGradient(proRatio)}">${m.pro_pct}%</td>`;
+    for (const jid of judges) {
+      const jd = m.per_judge[jid];
+      if (jd && jd.total > 0) {
+        const jpct = Math.round(100 * jd.pro / jd.total);
+        const jRatio = (jpct - 50) / 50;
+        html += `<td style="background:${cellGradient(jRatio)}">${jd.pro}/${jd.con}</td>`;
+      } else {
+        html += '<td style="opacity:0.3">-</td>';
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</table></div>';
+
+  section.innerHTML = html;
+}
+
 // ── Init ──
 renderStats();
 renderMotionBar();
 renderElo();
 buildMatrix();
+renderMotionResults();
 renderJudgeVotes();
 renderJudgeDebaterMatrix();
 renderJudgeAgreement();

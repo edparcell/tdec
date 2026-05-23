@@ -123,6 +123,62 @@ def _compute_judge_stats(run_dir: Path) -> dict:
     }
 
 
+def _compute_motion_stats(run_dir: Path) -> list[dict]:
+    judgements = []
+    for f in sorted((run_dir / "judgements").glob("*.json")):
+        judgements.append(json.loads(f.read_text(encoding="utf-8")))
+
+    debates = {}
+    for f in sorted((run_dir / "debates").glob("*.json")):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        debates[d["id"]] = d
+
+    topic_ids = []
+    for d in debates.values():
+        tid = d["topic"]["id"]
+        if tid not in topic_ids:
+            topic_ids.append(tid)
+
+    judge_ids = sorted({j["judge_model_id"] for j in judgements})
+
+    rows = []
+    for tid in topic_ids:
+        topic_debates = {did: d for did, d in debates.items() if d["topic"]["id"] == tid}
+        topic_judgements = [j for j in judgements if j["debate_id"] in topic_debates]
+
+        pro = sum(1 for j in topic_judgements if (j.get("parsed") or {}).get("winner") == "pro")
+        con = sum(1 for j in topic_judgements if (j.get("parsed") or {}).get("winner") == "con")
+        tie = sum(1 for j in topic_judgements if (j.get("parsed") or {}).get("winner") == "tie")
+
+        per_judge = {}
+        for jid in judge_ids:
+            jj = [j for j in topic_judgements if j["judge_model_id"] == jid]
+            jp = sum(1 for j in jj if (j.get("parsed") or {}).get("winner") == "pro")
+            jc = sum(1 for j in jj if (j.get("parsed") or {}).get("winner") == "con")
+            per_judge[jid] = {"pro": jp, "con": jc, "total": len(jj)}
+
+        motion_text = ""
+        for d in topic_debates.values():
+            motion_text = d["topic"].get("motion", tid)
+            break
+
+        total = pro + con + tie
+        result = "carried" if pro > con else "defeated" if con > pro else "tied"
+        rows.append({
+            "topic_id": tid,
+            "motion": motion_text,
+            "result": result,
+            "pro": pro,
+            "con": con,
+            "tie": tie,
+            "total": total,
+            "pro_pct": round(100 * pro / total, 1) if total else 0,
+            "per_judge": per_judge,
+        })
+
+    return {"judge_ids": judge_ids, "motions": rows}
+
+
 def _compute_word_counts(run_dir: Path) -> dict:
     debate_words = 0
     judgement_words = 0
@@ -159,6 +215,7 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
     topic_motions = _extract_topic_motions(run_dir)
     word_counts = _compute_word_counts(run_dir)
     judge_stats = _compute_judge_stats(run_dir)
+    motion_stats = _compute_motion_stats(run_dir)
     env = _jinja_env()
     template = env.get_template("viewer.html")
 
@@ -174,6 +231,7 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
             topic_motions=json.dumps(topic_motions),
             word_counts=json.dumps(word_counts),
             judge_stats=json.dumps(judge_stats),
+            motion_stats=json.dumps(motion_stats),
             inline_css=None,
         )
 
@@ -220,6 +278,7 @@ def export_html(run_dir: Path, output: Path) -> None:
     topic_motions = _extract_topic_motions(run_dir)
     word_counts = _compute_word_counts(run_dir)
     judge_stats = _compute_judge_stats(run_dir)
+    motion_stats = _compute_motion_stats(run_dir)
     html = template.render(
         run_name=run_dir.name,
         summary=json.dumps(summary),
@@ -228,6 +287,7 @@ def export_html(run_dir: Path, output: Path) -> None:
         topic_motions=json.dumps(topic_motions),
         word_counts=json.dumps(word_counts),
         judge_stats=json.dumps(judge_stats),
+        motion_stats=json.dumps(motion_stats),
         inline_css=css,
     )
     output.write_text(html, encoding="utf-8")
