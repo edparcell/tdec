@@ -1,0 +1,27 @@
+prompt_set: natural
+
+debaters:
+  - deepseek-v4-flash
+  - mistral-small-4
+
+judges:
+  - kimi-k2-5
+  - gpt-5-mini
+
+topics:
+  - id: ubi
+    motion: >-
+      Wealthy democracies should replace most welfare programs with a
+      universal basic income.
+
+run:
+  name: bias-ubi-parallel
+  rounds: 3
+  output_dir: runs
+  include_self_debates: true
+  workers: 10
+  reuse_openings: false
+  debate_mode: parallel
+  conditions:
+    debate_mode: parallel
+    motion_polarity: positive
