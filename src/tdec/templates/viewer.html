@@ -24,6 +24,7 @@
   <button class="tab-btn" onclick="switchTab('debates')">Debates</button>
   <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
   <button class="tab-btn" onclick="switchTab('analysis')">Analysis</button>
+  <button class="tab-btn" id="comparison-tab-btn" onclick="switchTab('comparison')" style="display:none">Comparison</button>
 </div>
 
 <div id="tab-debates" class="tab-content">
@@ -58,6 +59,12 @@
 <div id="tab-analysis" class="tab-content">
   <div class="judges-panel">
     <div id="analysis-content"></div>
+  </div>
+</div>
+
+<div id="tab-comparison" class="tab-content">
+  <div class="judges-panel">
+    <div id="comparison-content"></div>
   </div>
 </div>
 
@@ -703,49 +710,6 @@ function renderAnalysis() {
     }
   }
 
-  // Cross-run comparison
-  if (CROSS_RUN && CROSS_RUN.varying_conditions) {
-    const vc = CROSS_RUN.varying_conditions;
-    const keys = Object.keys(vc);
-    if (keys.length > 0) {
-      html += `<div class="section-title">Cross-Run Analysis <span class="help-icon" title="ANOVA decomposing score variation across ${CROSS_RUN.run_count} runs with different experimental conditions.">?</span></div>`;
-      html += `<div class="analysis-note"><strong>${CROSS_RUN.run_count} runs</strong> with varying conditions: `;
-      html += keys.map(k => `<strong>${k}</strong> (${vc[k].join(', ')})`).join(', ');
-      html += `</div>`;
-
-      if (CROSS_RUN.anova) {
-        const cra = CROSS_RUN.anova;
-        html += `<div class="analysis-note">Response: <strong>${cra.response}</strong> (${cra.n_observations} observations)</div>`;
-        html += '<div class="matrix-wrapper"><table class="judge-matrix">';
-        html += '<tr><th style="text-align:left">Source</th><th>SS</th><th>df</th><th>MS</th><th>F</th><th>p-value</th><th>% Variance</th></tr>';
-        for (const row of cra.rows) {
-          const sig = row.significant === true ? ' style="color:var(--accent);font-weight:600"' : '';
-          html += '<tr>';
-          html += `<td style="text-align:left;font-weight:500">${row.source}</td>`;
-          html += `<td>${row.ss}</td><td>${row.df}</td><td>${row.ms}</td>`;
-          html += `<td>${row.f !== null ? row.f : '-'}</td>`;
-          html += `<td${sig}>${row.p_value !== null ? formatPval(row.p_value) : '-'}</td>`;
-          html += `<td>${row.pct_variance}%</td>`;
-          html += '</tr>';
-        }
-        html += '</table></div>';
-
-        const sigRows = cra.rows.filter(r => r.significant === true);
-        if (sigRows.length > 0) {
-          const parts = sigRows.map(r => `<strong>${r.source}</strong> (${r.pct_variance}%, ${formatPval(r.p_value)})`);
-          html += `<div class="analysis-verdict significant">Significant effects: ${parts.join(', ')}.</div>`;
-        }
-        const nonsigRows = cra.rows.filter(r => r.significant === false);
-        if (nonsigRows.length > 0) {
-          const parts = nonsigRows.map(r => `${r.source} (${formatPval(r.p_value)})`);
-          html += `<div class="analysis-verdict not-significant">Not significant: ${parts.join(', ')}.</div>`;
-        }
-      }
-    } else if (CROSS_RUN.note) {
-      html += `<div class="analysis-note">${CROSS_RUN.note}</div>`;
-    }
-  }
-
   container.innerHTML = html;
 }
 
@@ -759,6 +723,57 @@ function rubricGradient(val) {
   if (val >= 7) return `rgba(34,197,94,${((val - 5) / 10).toFixed(2)})`;
   if (val <= 4) return `rgba(239,68,68,${((5 - val) / 10).toFixed(2)})`;
   return 'transparent';
+}
+
+function renderComparison() {
+  const container = document.getElementById('comparison-content');
+  if (!CROSS_RUN || !CROSS_RUN.varying_conditions) {
+    container.innerHTML = '<div class="detail-placeholder">Load multiple runs to see cross-run analysis.</div>';
+    return;
+  }
+  const vc = CROSS_RUN.varying_conditions;
+  const keys = Object.keys(vc);
+  if (keys.length === 0) {
+    container.innerHTML = `<div class="analysis-note">${CROSS_RUN.note || 'No varying conditions across runs.'}</div>`;
+    return;
+  }
+
+  let html = '';
+  html += `<div class="section-title">Cross-Run ANOVA <span class="help-icon" title="ANOVA decomposing score variation across ${CROSS_RUN.run_count} runs with different experimental conditions. Each condition that varies across runs is tested as a factor.">?</span></div>`;
+  html += `<div class="analysis-note"><strong>${CROSS_RUN.run_count} runs</strong> with varying conditions: `;
+  html += keys.map(k => `<strong>${k}</strong> (${vc[k].join(', ')})`).join(', ');
+  html += `</div>`;
+
+  if (CROSS_RUN.anova) {
+    const cra = CROSS_RUN.anova;
+    html += `<div class="analysis-note">Response: <strong>${cra.response}</strong> (${cra.n_observations} observations)</div>`;
+    html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+    html += '<tr><th style="text-align:left">Source</th><th>SS <span class="help-icon" title="Sum of Squares: total variation explained by this factor.">?</span></th><th>df</th><th>MS</th><th>F <span class="help-icon" title="F-statistic: ratio of explained to unexplained variance. Larger means stronger effect.">?</span></th><th>p-value</th><th>% Variance <span class="help-icon" title="Percentage of total score variation explained by this experimental condition.">?</span></th></tr>';
+    for (const row of cra.rows) {
+      const sig = row.significant === true ? ' style="color:var(--accent);font-weight:600"' : '';
+      html += '<tr>';
+      html += `<td style="text-align:left;font-weight:500">${row.source}</td>`;
+      html += `<td>${row.ss}</td><td>${row.df}</td><td>${row.ms}</td>`;
+      html += `<td>${row.f !== null ? row.f : '-'}</td>`;
+      html += `<td${sig}>${row.p_value !== null ? formatPval(row.p_value) : '-'}</td>`;
+      html += `<td>${row.pct_variance}%</td>`;
+      html += '</tr>';
+    }
+    html += '</table></div>';
+
+    const sigRows = cra.rows.filter(r => r.significant === true);
+    if (sigRows.length > 0) {
+      const parts = sigRows.map(r => `<strong>${r.source}</strong> (${r.pct_variance}% of variance, ${formatPval(r.p_value)})`);
+      html += `<div class="analysis-verdict significant">Significant effects: ${parts.join(', ')}.</div>`;
+    }
+    const nonsigRows = cra.rows.filter(r => r.significant === false);
+    if (nonsigRows.length > 0) {
+      const parts = nonsigRows.map(r => `${r.source} (${formatPval(r.p_value)})`);
+      html += `<div class="analysis-verdict not-significant">Not significant: ${parts.join(', ')}.</div>`;
+    }
+  }
+
+  container.innerHTML = html;
 }
 
 function navigateToTopic(topicId) {
@@ -824,6 +839,11 @@ renderJudgeVotes();
 renderJudgeDebaterMatrix();
 renderJudgeAgreement();
 renderAnalysis();
+renderComparison();
+
+if (RUNS && RUNS.length > 1) {
+  document.getElementById('comparison-tab-btn').style.display = '';
+}
 
 const topicCount = (SUMMARY.motions || []).length;
 if (topicCount <= 1) {
