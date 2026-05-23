@@ -1,0 +1,8 @@
+judges:
+  - kimi-k2-5
+  - gpt-5-mini
+
+judging:
+  repair_retries: 1
+  parse_retries: 1
+  api_retries: 2
