@@ -28,6 +28,7 @@ Top-level fields:
 | `pro_model` | Public model config for the pro side, with API key redacted. |
 | `con_model` | Public model config for the con side, with API key redacted. |
 | `rounds` | Number of turns per side. |
+| `debate_mode` | `pro_first`, `con_first`, or `parallel`. |
 | `turns` | Ordered debate turns. |
 
 Turn fields:
@@ -110,6 +111,7 @@ Important summary fields:
 
 | Field | Description |
 | --- | --- |
+| `conditions` | Experimental metadata dict from run config. |
 | `motions` | Per-topic carried/defeated/tied totals. |
 | `models` | Per-model calls, latency, cost, tokens, and Elo. |
 | `pairs` | Flat list of ordered debate pair results. |

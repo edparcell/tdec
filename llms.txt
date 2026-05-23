@@ -5,40 +5,58 @@ LLMs and scores them with independent judge LLMs.
 
 Start here:
 
-- README.md - short project overview and common commands.
+- README.md - project overview, config structure, commands.
 - docs/tutorials/first-tournament.md - hands-on beginner path.
 - docs/how-to/ - task-oriented recipes.
 - docs/reference/ - exact command, configuration, and artifact descriptions.
 - docs/explanation/ - design rationale and scoring model.
 
+Config structure (under configs/):
+
+- configs/debaters/*.yaml - one per debater (model config + strategy field).
+- configs/judges/*.yaml - one per judge (model config + style field).
+- configs/prompt-sets/*.yaml - prompt templates using $placeholder syntax.
+- configs/runs/*.yaml - run configs referencing debaters, judges, and prompt-set by filename.
+
 Key source files:
 
-- src/tdec/cli.py - Click command line entry point.
-- src/tdec/config.py - YAML config dataclasses and validation.
-- src/tdec/debate.py - turn sequencing and model pairings.
-- src/tdec/judging.py - judge prompt execution and JSON repair.
+- src/tdec/cli.py - Click CLI: run, view, export, judge, relabel commands.
+- src/tdec/config.py - YAML config dataclasses: DebaterConfig, JudgeModelConfig,
+  TopicConfig, RunConfig, PromptSetConfig, TournamentConfig. Loaders for each.
+- src/tdec/debate.py - turn sequencing, OpeningCache, run_debate (sequential),
+  run_parallel_debate (simultaneous rounds). Supports pro_first/con_first/parallel.
+- src/tdec/judging.py - judge prompt execution, JSON repair, parallel judge prompt.
 - src/tdec/models.py - LiteLLM calls, metrics, cost extraction, metadata capture.
-- src/tdec/tournament.py - tournament orchestration, thread pool, summaries, Elo.
-- src/tdec/artifacts.py - run directory, compact/full artifact writing.
-- src/tdec/prompts.py - debater and judge prompt templates.
+- src/tdec/tournament.py - tournament orchestration, thread pool, retry logic,
+  summaries, Elo, run_posthoc_judges, run_relabel.
+- src/tdec/artifacts.py - run directory creation, debate/judgement/summary writing
+  and loading.
+- src/tdec/prompts.py - PromptSet class rendering templates from PromptSetConfig.
+- src/tdec/viewer.py - FastAPI viewer server, standalone HTML export, statistical
+  analysis (scipy), multi-run comparison.
+- src/tdec/templates/viewer.html - Jinja2 template with JS for interactive viewer.
+- src/tdec/static/viewer.css - viewer styles.
+- src/tdec/debate_types.py - shared dataclasses: DebateTranscript, DebateTurn,
+  Judgement, ModelCallResult, with to_dict/from_dict serialization.
 
 Important behavior:
 
-- Self-debates are enabled by default. Set `run.include_self_debates: false`
-  to run only cross-model pairings.
-- `run.workers` controls concurrent debate and judgement jobs. The CLI
-  `--workers` option overrides it.
-- Provider failures skip the failed debate or judgement and write error records
-  to `errors/`; they do not stop the full tournament.
-- Artifacts are compact by default. Use `--artifact-verbosity full` to keep full
-  raw response metadata for every model call.
-- Blank model outputs always keep full response metadata so the failure can be
-  diagnosed after the run.
-- Missing API key environment variables fail before the tournament starts.
-
-Documentation style:
-
-- Tutorials teach by doing, with minimal explanation.
-- How-to guides solve one named task.
-- Reference pages describe exact fields and commands.
-- Explanation pages discuss design tradeoffs.
+- Configs are split into debaters/, judges/, prompt-sets/, runs/ under configs/.
+- Run configs reference debaters and judges by filename (without .yaml).
+- prompt_set is required in run configs. Templates use $placeholder syntax
+  (string.Template) to avoid conflicts with JSON braces.
+- strategy is required on debaters, style is required on judges (may be empty).
+- debate_mode controls turn order: pro_first (default), con_first, or parallel.
+- Parallel debates use parallel_judge_system prompt that tells judges rounds
+  were simultaneous.
+- run.conditions is a dict of experimental metadata written to summary.json
+  for cross-run comparison.
+- API retries: debate_api_retries (default 2) and judging api_retries (default 2)
+  retry failed provider calls before logging errors.
+- --resume flag on tdec run fills in missing debates and judgements from a
+  previous incomplete run.
+- tdec relabel creates label-swapped copies of debates and rejudges them.
+- Cache control markers on system prompts and judge transcripts enable
+  Anthropic prompt caching; other providers ignore them.
+- The viewer supports multiple run directories for cross-run comparison
+  with ANOVA on varying experimental conditions.
