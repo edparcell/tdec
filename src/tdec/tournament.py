@@ -82,7 +82,16 @@ def run_tournament(
 
     prompt_set = PromptSet(config.prompt_set)
     opening_cache = OpeningCache() if config.run.reuse_openings else None
-    debate_fn = run_parallel_debate if config.run.parallel_rounds else run_debate
+    debate_mode = config.run.debate_mode
+    if debate_mode == "parallel":
+        debate_fn = run_parallel_debate
+        debate_extra_kwargs = {}
+    elif debate_mode == "con_first":
+        debate_fn = run_debate
+        debate_extra_kwargs = {"con_first": True}
+    else:
+        debate_fn = run_debate
+        debate_extra_kwargs = {}
 
     existing_debates = {f.stem for f in (run_dir / "debates").glob("*.json")}
     all_jobs = _debate_jobs(config)
@@ -94,6 +103,7 @@ def run_tournament(
         jobs=pending_jobs,
         config=config,
         debate_fn=debate_fn,
+        debate_extra_kwargs=debate_extra_kwargs,
         client=client,
         prompt_set=prompt_set,
         opening_cache=opening_cache,
@@ -134,7 +144,7 @@ def run_tournament(
 
     all_judgements = load_all_judgements(run_dir)
 
-    summary = summarize(run_dir, debates, all_judgements, errors)
+    summary = summarize(run_dir, debates, all_judgements, errors, config.run.conditions)
     write_summary(run_dir, summary)
     return summary
 
@@ -197,6 +207,7 @@ def _run_debate_batch(
     jobs: list[DebateJob],
     config: TournamentConfig,
     debate_fn,
+    debate_extra_kwargs: dict | None = None,
     client: ChatModel,
     prompt_set: PromptSet,
     opening_cache: OpeningCache | None,
@@ -205,6 +216,7 @@ def _run_debate_batch(
     workers: int,
     api_retries: int,
 ) -> tuple[list[tuple[int, DebateTranscript]], list[TournamentError]]:
+    extra = debate_extra_kwargs or {}
     results: list[tuple[int, DebateTranscript]] = []
     errors: list[TournamentError] = []
     pending = list(jobs)
@@ -227,6 +239,7 @@ def _run_debate_batch(
                     rounds=config.run.rounds,
                     prompt_set=prompt_set,
                     opening_cache=opening_cache,
+                    **extra,
                 ): job
                 for job in pending
             }
@@ -373,6 +386,7 @@ def summarize(
     debates: list[DebateTranscript],
     judgements: list[Judgement],
     errors: list[TournamentError] | None = None,
+    conditions: dict[str, str] | None = None,
 ) -> TournamentResult:
     errors = errors or []
     debate_summaries = []
@@ -400,6 +414,7 @@ def summarize(
     motion_summaries = _motion_summaries(debate_summaries)
     return {
         "run_dir": str(run_dir),
+        "conditions": conditions or {},
         "total_cost_usd": _sum_optional_costs(
             debate["debate_cost_usd"] for debate in debate_summaries
         )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 from typing import Any
@@ -42,6 +42,9 @@ class TopicConfig:
     context: str | None = None
 
 
+DEBATE_MODES = ("pro_first", "con_first", "parallel")
+
+
 @dataclass(frozen=True)
 class RunConfig:
     name: str
@@ -50,8 +53,9 @@ class RunConfig:
     include_self_debates: bool = True
     workers: int = 1
     reuse_openings: bool = True
-    parallel_rounds: bool = False
+    debate_mode: str = "pro_first"
     debate_api_retries: int = 2
+    conditions: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,7 @@ class PromptSetConfig:
     parallel_opening: str
     parallel_response: str
     judge_system: str
+    parallel_judge_system: str
     judge: str
     judge_repair: str
 
@@ -125,8 +130,9 @@ def load_run_config(path: str | Path) -> TournamentConfig:
         include_self_debates=_bool_value(run_data.get("include_self_debates", True)),
         workers=_positive_int(run_data.get("workers", 1), "run.workers"),
         reuse_openings=_bool_value(run_data.get("reuse_openings", True)),
-        parallel_rounds=_bool_value(run_data.get("parallel_rounds", False)),
+        debate_mode=_debate_mode(run_data.get("debate_mode", "pro_first")),
         debate_api_retries=int(run_data.get("debate_api_retries", 2)),
+        conditions=dict(run_data.get("conditions") or {}),
     )
 
     return TournamentConfig(
@@ -174,6 +180,7 @@ def load_prompt_set_config(path: str | Path) -> PromptSetConfig:
         parallel_opening=str(data["parallel_opening"]),
         parallel_response=str(data["parallel_response"]),
         judge_system=str(data["judge_system"]),
+        parallel_judge_system=str(data.get("parallel_judge_system") or data["judge_system"]),
         judge=str(data["judge"]),
         judge_repair=str(data["judge_repair"]),
     )
@@ -262,6 +269,13 @@ def _required_list(data: dict[str, Any], key: str) -> list:
     if not isinstance(value, list):
         raise ValueError(f"Config key {key!r} must be a list")
     return value
+
+
+def _debate_mode(value: Any) -> str:
+    mode = str(value)
+    if mode not in DEBATE_MODES:
+        raise ValueError(f"debate_mode must be one of {DEBATE_MODES}, got {mode!r}")
+    return mode
 
 
 def _bool_value(value: Any) -> bool:

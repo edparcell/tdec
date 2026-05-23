@@ -22,9 +22,11 @@ def judge_debate(
     prompt_set: PromptSet,
 ) -> Judgement:
     config = judging_config or JudgingConfig()
+    is_parallel = transcript.debate_mode == "parallel"
+    judge_sys = prompt_set.render_judge_system(style=judge_model.style, parallel=is_parallel)
     base_messages = [
         {"role": "system", "content": [
-            {"type": "text", "text": prompt_set.render_judge_system(style=judge_model.style),
+            {"type": "text", "text": judge_sys,
              "cache_control": _CACHE_CONTROL},
         ]},
         {"role": "user", "content": [

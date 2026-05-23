@@ -64,6 +64,7 @@ class DebateTranscript:
     con_model: ModelConfig
     rounds: int
     turns: list[DebateTurn]
+    debate_mode: str = "pro_first"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +73,7 @@ class DebateTranscript:
             "pro_model": public_model_dict(self.pro_model),
             "con_model": public_model_dict(self.con_model),
             "rounds": self.rounds,
+            "debate_mode": self.debate_mode,
             "turns": [asdict(turn) for turn in self.turns],
         }
 
@@ -89,6 +91,7 @@ class DebateTranscript:
             con_model=_model_config_from_dict(data["con_model"]),
             rounds=data["rounds"],
             turns=[_turn_from_dict(t) for t in data["turns"]],
+            debate_mode=data.get("debate_mode", "pro_first"),
         )
 
 

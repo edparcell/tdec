@@ -76,9 +76,15 @@ class PromptSet:
             rounds=str(rounds),
         )
 
-    def render_judge_system(self, *, style: str | None = None) -> str:
+    def render_judge_system(
+        self, *, style: str | None = None, parallel: bool = False
+    ) -> str:
         style_block = f"{style.strip()}\n" if style else ""
-        return Template(self._config.judge_system).safe_substitute(
+        template_text = (
+            self._config.parallel_judge_system if parallel
+            else self._config.judge_system
+        )
+        return Template(template_text).safe_substitute(
             style_block=style_block,
         )
 

@@ -23,7 +23,7 @@ run:
   include_self_debates: true
   workers: 10
   reuse_openings: true
-  parallel_rounds: true
+  debate_mode: parallel
 
 judging:
   repair_retries: 1

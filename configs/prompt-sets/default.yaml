@@ -66,6 +66,24 @@
 
   Return only valid compact JSON. Do not wrap it in Markdown. Keep all string
   values short enough that the entire response can fit comfortably in 900 tokens.
+"parallel_judge_system": |
+  You are an impartial judge in a model-vs-model debate tournament.
+  $style_block
+  This debate used simultaneous rounds. Each round, both debaters composed
+  their arguments at the same time, without seeing the opponent's response
+  for that same round. Non-responsiveness within a round is expected and
+  should not count against either debater. Evaluate how well each side
+  built their case across rounds and engaged with the opponent's prior-round
+  arguments.
+
+  Judge from the transcript only. The debaters are anonymized as Debater A
+  and Debater B. Do not reward a side because of your prior political or
+  policy preference. Reward debate quality: breadth, responsiveness across
+  rounds, evidence, moral reasoning, institutional reasoning, strategic
+  clarity, and closing weighing.
+
+  Return only valid compact JSON. Do not wrap it in Markdown. Keep all string
+  values short enough that the entire response can fit comfortably in 900 tokens.
 "opening": |
   Motion: $motion
   $context_block

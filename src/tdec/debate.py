@@ -58,6 +58,7 @@ def run_debate(
     rounds: int,
     prompt_set: PromptSet,
     opening_cache: OpeningCache | None = None,
+    con_first: bool = False,
 ) -> DebateTranscript:
     debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
     turns: list[DebateTurn] = []
@@ -66,13 +67,19 @@ def run_debate(
         "con": [_cached_msg("system", prompt_set.render_debater_system(strategy=con_model.strategy))],
     }
 
+    side_order = [
+        ("con", con_model, "B"),
+        ("pro", pro_model, "A"),
+    ] if con_first else [
+        ("pro", pro_model, "A"),
+        ("con", con_model, "B"),
+    ]
+
     for round_number in range(1, rounds + 1):
-        for side, model, label in [
-            ("pro", pro_model, "A"),
-            ("con", con_model, "B"),
-        ]:
-            is_pro_opening = round_number == 1 and side == "pro"
-            if is_pro_opening:
+        for side, model, label in side_order:
+            first_speaker = side_order[0][0]
+            is_opening = round_number == 1 and side == first_speaker
+            if is_opening:
                 prompt = prompt_set.render_opening(
                     motion=topic.motion, context=topic.context,
                     side=side, rounds=rounds,
@@ -84,8 +91,8 @@ def run_debate(
                 )
             histories[side].append(_plain_msg("user", prompt))
 
-            if is_pro_opening and opening_cache is not None:
-                cache_key = (model.id, topic.id, "pro")
+            if is_opening and opening_cache is not None:
+                cache_key = (model.id, topic.id, side)
                 result = opening_cache.get_or_call(
                     cache_key, lambda: client.call(model, histories[side])
                 )
@@ -112,6 +119,7 @@ def run_debate(
         con_model=con_model,
         rounds=rounds,
         turns=turns,
+        debate_mode="con_first" if con_first else "pro_first",
     )
 
 
@@ -191,6 +199,7 @@ def run_parallel_debate(
         con_model=con_model,
         rounds=rounds,
         turns=turns,
+        debate_mode="parallel",
     )
 
 
