@@ -1,0 +1,98 @@
+prompt_set: natural
+
+debaters:
+  - deepseek-v4-flash
+  - mistral-small-4
+
+judges:
+  - kimi-k2-5
+  - gpt-5-mini
+
+topics:
+  - id: ai_slowdown
+    motion: >-
+      Advanced AI development should be slowed by law until robust alignment
+      and control methods are demonstrated.
+  - id: open_source_ai
+    motion: >-
+      Frontier AI model weights should be open-sourced by default.
+  - id: ubi
+    motion: >-
+      Wealthy democracies should replace most welfare programs with a
+      universal basic income.
+  - id: nuclear_over_renewables
+    motion: >-
+      Climate policy should prioritize rapid nuclear buildout over
+      renewables-led decarbonization.
+  - id: geoengineering
+    motion: >-
+      Governments should begin controlled solar geoengineering trials
+      within the next decade.
+  - id: platform_speech
+    motion: >-
+      Social media platforms should be legally required to protect
+      viewpoint-neutral political speech.
+  - id: expand_migration
+    motion: >-
+      High-income countries should substantially expand legal migration
+      for work.
+  - id: us_china_containment
+    motion: >-
+      The United States should pursue containment, rather than engagement,
+      toward China.
+  - id: european_defense
+    motion: >-
+      European countries should take primary responsibility for European
+      defense, with the US as a backstop.
+  - id: industrial_subsidies
+    motion: >-
+      Governments should actively subsidize strategic domestic industries
+      even at the cost of market efficiency.
+  - id: public_blockchains
+    motion: >-
+      Public blockchains are a net positive for society.
+  - id: central_bank_independence
+    motion: >-
+      Central banks should have less independence from elected governments.
+  - id: abolish_zoning
+    motion: >-
+      Cities should abolish most local zoning restrictions on housing density.
+  - id: university_outcomes
+    motion: >-
+      Universities should be judged primarily by graduate earnings and
+      social mobility outcomes.
+  - id: single_payer_healthcare
+    motion: >-
+      The United States should adopt a single-payer healthcare system.
+  - id: incapacitation_vs_rehabilitation
+    motion: >-
+      Public safety policy should prioritize incapacitation over
+      rehabilitation for serious repeat offenders.
+  - id: wealth_taxes
+    motion: >-
+      Wealth taxes are a necessary tool for reducing democratic instability.
+  - id: adaptation_over_mitigation
+    motion: >-
+      Climate policy should shift more resources from emissions reduction
+      to adaptation and resilience.
+  - id: mandatory_voting
+    motion: >-
+      Mandatory voting would improve democratic legitimacy.
+  - id: space_settlement
+    motion: >-
+      Governments should fund permanent human settlement beyond Earth
+      as a strategic priority.
+
+run:
+  name: twenty-motions
+  rounds: 3
+  output_dir: runs
+  include_self_debates: true
+  workers: 10
+  reuse_openings: true
+  parallel_rounds: true
+
+judging:
+  repair_retries: 1
+  parse_retries: 1
+  api_retries: 2

@@ -1,0 +1,30 @@
+prompt_set: natural
+
+debaters:
+  - deepseek-v4-flash-empiricist
+  - deepseek-v4-flash-principled
+  - deepseek-v4-flash-pragmatist
+  - deepseek-v4-flash-narrative
+
+judges:
+  - claude-haiku-4-5
+  - kimi-k2-5
+
+topics:
+  - id: industrial_subsidies
+    motion: >-
+      Governments should actively subsidize strategic domestic industries
+      even at the cost of market efficiency.
+
+run:
+  name: industrial-policy-strategies
+  rounds: 3
+  output_dir: runs
+  include_self_debates: true
+  workers: 10
+  reuse_openings: true
+  parallel_rounds: true
+
+judging:
+  repair_retries: 1
+  parse_retries: 1
