@@ -57,6 +57,7 @@ class RunConfig:
 class JudgingConfig:
     repair_retries: int = 1
     parse_retries: int = 1
+    api_retries: int = 2
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,7 @@ def _judging_config(data: Any) -> JudgingConfig:
     return JudgingConfig(
         repair_retries=int(data.get("repair_retries", 1)),
         parse_retries=int(data.get("parse_retries", 1)),
+        api_retries=int(data.get("api_retries", 2)),
     )
 
 
