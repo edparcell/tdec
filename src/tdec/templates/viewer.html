@@ -97,48 +97,52 @@ function renderMotionBar() {
 
   if (topics.length === 0) return;
 
-  activeTopic = topics[0];
-
   if (topics.length === 1) {
+    activeTopic = topics[0];
     const motion = TOPIC_MOTIONS[topics[0]];
     const motionText = motion ? motion.motion : topics[0];
     const result = motions[0];
     bar.innerHTML = `<span class="motion-text">${escapeHtml(motionText)}</span>
       <span class="stat" style="margin-left:12px">${result.result} (${result.pro_judges}P/${result.con_judges}C/${result.tie_judges}T)</span>`;
   } else {
-    let html = '<div class="topic-pills">';
+    activeTopic = '__all__';
+    let html = '<select class="topic-select" id="topic-select" onchange="selectTopic(this.value)">';
+    html += `<option value="__all__">All topics (${topics.length})</option>`;
     for (const topic of topics) {
       const motion = TOPIC_MOTIONS[topic];
-      const label = motion ? truncate(motion.motion, 60) : topic;
-      html += `<span class="topic-pill${topic === activeTopic ? ' active' : ''}" data-topic="${topic}" onclick="selectTopic('${topic}')">${escapeHtml(label)}</span>`;
+      const label = motion ? motion.motion : topic;
+      html += `<option value="${topic}">${escapeHtml(label)}</option>`;
     }
-    html += '</div>';
-    const motion = TOPIC_MOTIONS[activeTopic];
-    html += `<span class="motion-text" id="active-motion-text">${escapeHtml(motion ? motion.motion : activeTopic)}</span>`;
-    const result = motions.find(m => m.topic_id === activeTopic);
-    if (result) {
-      html += ` <span class="stat">${result.result} (${result.pro_judges}P/${result.con_judges}C/${result.tie_judges}T)</span>`;
-    }
+    html += '</select>';
+    html += '<span class="motion-detail" id="motion-detail"></span>';
     bar.innerHTML = html;
+    updateMotionDetail();
   }
 }
 
 function selectTopic(topicId) {
   activeTopic = topicId;
-  document.querySelectorAll('.topic-pill').forEach(el => {
-    el.classList.toggle('active', el.dataset.topic === topicId);
-  });
-  const motion = TOPIC_MOTIONS[topicId];
-  const motionEl = document.getElementById('active-motion-text');
-  if (motionEl && motion) motionEl.textContent = motion.motion;
-
-  document.querySelectorAll('.matrix-block').forEach(el => {
-    el.style.display = el.dataset.topic === topicId ? '' : 'none';
-  });
+  updateMotionDetail();
+  buildMatrix();
 }
 
-function truncate(str, max) {
-  return str.length > max ? str.slice(0, max) + '...' : str;
+function updateMotionDetail() {
+  const detail = document.getElementById('motion-detail');
+  if (!detail) return;
+  if (activeTopic === '__all__') {
+    const motions = SUMMARY.motions || [];
+    const totalP = motions.reduce((s, m) => s + m.pro_judges, 0);
+    const totalC = motions.reduce((s, m) => s + m.con_judges, 0);
+    const totalT = motions.reduce((s, m) => s + m.tie_judges, 0);
+    detail.innerHTML = ` <span class="stat">${totalP}P/${totalC}C/${totalT}T across ${motions.length} motions</span>`;
+  } else {
+    const result = (SUMMARY.motions || []).find(m => m.topic_id === activeTopic);
+    if (result) {
+      detail.innerHTML = ` <span class="stat">${result.result} (${result.pro_judges}P/${result.con_judges}C/${result.tie_judges}T)</span>`;
+    } else {
+      detail.innerHTML = '';
+    }
+  }
 }
 
 // ── Elo table ──
@@ -158,70 +162,82 @@ function renderElo() {
 
 // ── Cross-table matrices ──
 function buildMatrix() {
-  const topics = [...new Set(SUMMARY.pairs.map(p => p.topic_id))];
   const section = document.getElementById('matrix-section');
-  let html = '';
+  const pairs = activeTopic === '__all__'
+    ? SUMMARY.pairs
+    : SUMMARY.pairs.filter(p => p.topic_id === activeTopic);
 
-  for (const topic of topics) {
-    const pairs = SUMMARY.pairs.filter(p => p.topic_id === topic);
-    const models = getOrderedModels(pairs);
-    const lookup = {};
-    for (const p of pairs) lookup[p.pro_model_id + '|' + p.con_model_id] = p;
-
-    const rowTotals = {};
-    const colTotals = {};
-    for (const m of models) {
-      rowTotals[m] = { pro: 0, con: 0, total: 0 };
-      colTotals[m] = { pro: 0, con: 0, total: 0 };
-    }
-    for (const p of pairs) {
-      rowTotals[p.pro_model_id].pro += p.pro_judges;
-      rowTotals[p.pro_model_id].con += p.con_judges;
-      rowTotals[p.pro_model_id].total += p.pro_judges + p.con_judges;
-      colTotals[p.con_model_id].pro += p.pro_judges;
-      colTotals[p.con_model_id].con += p.con_judges;
-      colTotals[p.con_model_id].total += p.pro_judges + p.con_judges;
-    }
-
-    const isHidden = topics.length > 1 && topic !== activeTopic;
-    html += `<div class="matrix-block" data-topic="${topic}" style="${isHidden ? 'display:none' : ''}">`;
-    html += '<div class="section-title">Cross-Table (Pro &#8595; / Con &#8594;)</div>';
-    html += '<div class="matrix-wrapper"><table class="matrix">';
-
-    html += '<tr><th class="corner"></th>';
-    for (const col of models) html += `<th>${shortName(col)}</th>`;
-    html += '<th class="total-header">Total</th></tr>';
-
-    for (const row of models) {
-      html += `<tr><th class="row-header">${shortName(row)}</th>`;
-      for (const col of models) {
-        const p = lookup[row + '|' + col];
-        if (p) {
-          const isSelf = row === col;
-          const ratio = p.pro_judges + p.con_judges > 0 ? (p.pro_judges - p.con_judges) / (p.pro_judges + p.con_judges) : 0;
-          const cls = isSelf ? 'cell self-debate' : 'cell';
-          html += `<td class="${cls}" style="background:${cellGradient(ratio)}" onclick="selectCell(this, '${p.debate_id}')">${p.pro_judges}/${p.con_judges}</td>`;
-        } else {
-          html += '<td class="cell" style="opacity:0.3">-</td>';
-        }
-      }
-      const rt = rowTotals[row];
-      const rRatio = rt.total > 0 ? (rt.pro - rt.con) / rt.total : 0;
-      html += `<td class="total-cell" style="background:${cellGradient(rRatio)}">${rt.pro}/${rt.con}</td></tr>`;
-    }
-
-    html += '<tr><th class="row-header total-header">Total</th>';
-    for (const col of models) {
-      const ct = colTotals[col];
-      const cRatio = ct.total > 0 ? (ct.pro - ct.con) / ct.total : 0;
-      html += `<td class="total-cell" style="background:${cellGradient(cRatio)}">${ct.pro}/${ct.con}</td>`;
-    }
-    let gP = 0, gC = 0;
-    for (const p of pairs) { gP += p.pro_judges; gC += p.con_judges; }
-    const gR = (gP + gC) > 0 ? (gP - gC) / (gP + gC) : 0;
-    html += `<td class="total-cell" style="background:${cellGradient(gR)}">${gP}/${gC}</td>`;
-    html += '</tr></table></div></div>';
+  if (pairs.length === 0) {
+    section.innerHTML = '<div class="detail-placeholder">No debates for this topic.</div>';
+    return;
   }
+
+  const models = getOrderedModels(pairs);
+  const lookup = {};
+  for (const p of pairs) {
+    const key = p.pro_model_id + '|' + p.con_model_id;
+    if (!lookup[key]) lookup[key] = { pro: 0, con: 0, debate_ids: [] };
+    lookup[key].pro += p.pro_judges;
+    lookup[key].con += p.con_judges;
+    lookup[key].debate_ids.push(p.debate_id);
+  }
+
+  const rowTotals = {};
+  const colTotals = {};
+  for (const m of models) {
+    rowTotals[m] = { pro: 0, con: 0, total: 0 };
+    colTotals[m] = { pro: 0, con: 0, total: 0 };
+  }
+  for (const [key, cell] of Object.entries(lookup)) {
+    const [proId] = key.split('|');
+    const conId = key.split('|')[1];
+    rowTotals[proId].pro += cell.pro;
+    rowTotals[proId].con += cell.con;
+    rowTotals[proId].total += cell.pro + cell.con;
+    colTotals[conId].pro += cell.pro;
+    colTotals[conId].con += cell.con;
+    colTotals[conId].total += cell.pro + cell.con;
+  }
+
+  let html = '<div class="section-title">Cross-Table (Pro &#8595; / Con &#8594;)</div>';
+  html += '<div class="matrix-wrapper"><table class="matrix">';
+
+  html += '<tr><th class="corner"></th>';
+  for (const col of models) html += `<th>${shortName(col)}</th>`;
+  html += '<th class="total-header">Total</th></tr>';
+
+  for (const row of models) {
+    html += `<tr><th class="row-header">${shortName(row)}</th>`;
+    for (const col of models) {
+      const cell = lookup[row + '|' + col];
+      if (cell) {
+        const isSelf = row === col;
+        const ratio = cell.pro + cell.con > 0 ? (cell.pro - cell.con) / (cell.pro + cell.con) : 0;
+        const cls = isSelf ? 'cell self-debate' : 'cell';
+        const clickDebate = cell.debate_ids.length === 1
+          ? `onclick="selectCell(this, '${cell.debate_ids[0]}')"`
+          : '';
+        html += `<td class="${cls}" style="background:${cellGradient(ratio)}" ${clickDebate}>${cell.pro}/${cell.con}</td>`;
+      } else {
+        html += '<td class="cell" style="opacity:0.3">-</td>';
+      }
+    }
+    const rt = rowTotals[row];
+    const rRatio = rt.total > 0 ? (rt.pro - rt.con) / rt.total : 0;
+    html += `<td class="total-cell" style="background:${cellGradient(rRatio)}">${rt.pro}/${rt.con}</td></tr>`;
+  }
+
+  html += '<tr><th class="row-header total-header">Total</th>';
+  for (const col of models) {
+    const ct = colTotals[col];
+    const cRatio = ct.total > 0 ? (ct.pro - ct.con) / ct.total : 0;
+    html += `<td class="total-cell" style="background:${cellGradient(cRatio)}">${ct.pro}/${ct.con}</td>`;
+  }
+  let gP = 0, gC = 0;
+  for (const cell of Object.values(lookup)) { gP += cell.pro; gC += cell.con; }
+  const gR = (gP + gC) > 0 ? (gP - gC) / (gP + gC) : 0;
+  html += `<td class="total-cell" style="background:${cellGradient(gR)}">${gP}/${gC}</td>`;
+  html += '</tr></table></div>';
 
   section.innerHTML = html;
 }

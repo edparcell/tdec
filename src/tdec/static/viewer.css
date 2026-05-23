@@ -60,29 +60,24 @@ body {
   font-style: italic;
 }
 
-.topic-pills {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-
-.topic-pill {
-  padding: 4px 12px;
-  border-radius: 16px;
-  border: 1px solid var(--border);
+.topic-select {
   background: var(--surface2);
-  color: var(--text-dim);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
   font-size: 13px;
+  font-family: inherit;
+  max-width: 600px;
   cursor: pointer;
-  transition: all 0.15s;
 }
 
-.topic-pill:hover { border-color: var(--accent); color: var(--text); }
-.topic-pill.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+.topic-select:hover { border-color: var(--accent); }
+.topic-select:focus { outline: 1px solid var(--accent); outline-offset: 1px; }
+
+.motion-detail {
+  margin-left: 8px;
+  font-size: 13px;
 }
 
 /* Tabs */
