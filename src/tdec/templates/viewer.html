@@ -22,6 +22,7 @@
   <button class="tab-btn" id="motions-tab-btn" onclick="switchTab('motions')">Motions</button>
   <button class="tab-btn" onclick="switchTab('debates')">Debates</button>
   <button class="tab-btn" onclick="switchTab('judges')">Judges</button>
+  <button class="tab-btn" onclick="switchTab('analysis')">Analysis</button>
 </div>
 
 <div id="tab-debates" class="tab-content">
@@ -53,6 +54,12 @@
   </div>
 </div>
 
+<div id="tab-analysis" class="tab-content">
+  <div class="judges-panel">
+    <div id="analysis-content"></div>
+  </div>
+</div>
+
 <script>
 const SUMMARY = {{ summary|safe }};
 const ALL_DEBATES = {{ all_debates|safe }};
@@ -61,6 +68,7 @@ const TOPIC_MOTIONS = {{ topic_motions|safe }};
 const WORD_COUNTS = {{ word_counts|safe }};
 const JUDGE_STATS = {{ judge_stats|safe }};
 const MOTION_STATS = {{ motion_stats|safe }};
+const ANALYSIS = {{ analysis_stats|safe }};
 
 let activeTopic = null;
 
@@ -527,6 +535,121 @@ function agreementGradient(pct) {
   return 'transparent';
 }
 
+// ── Analysis ──
+function renderAnalysis() {
+  const container = document.getElementById('analysis-content');
+  let html = '';
+
+  // Section 1: Side Bias
+  const sb = ANALYSIS.side_bias;
+  if (sb) {
+    html += `<div class="section-title">Side Bias <span class="help-icon" title="Tests whether pro or con has a structural advantage. A significant result means the side assignment affects outcomes beyond chance.">?</span></div>`;
+    html += `<div class="ci-bar-container">`;
+    html += `<div class="ci-bar-fill jv-pro" style="width:${sb.pro_pct}%"></div>`;
+    html += `<div class="ci-bar-fill jv-con" style="width:${100 - sb.pro_pct}%"></div>`;
+    html += `<div class="ci-bar-marker" style="left:50%"></div>`;
+    html += `<div class="ci-bar-range" style="left:${sb.ci_low}%;width:${sb.ci_high - sb.ci_low}%"></div>`;
+    html += `</div>`;
+    html += `<div class="ci-bar-label">Pro ${sb.pro_pct}% (95% CI: ${sb.ci_low}%-${sb.ci_high}%) &middot; ${sb.pro_wins}P/${sb.con_wins}C of ${sb.total} decided</div>`;
+    if (sb.significant) {
+      const side = sb.pro_pct > 50 ? 'Pro' : 'Con';
+      html += `<div class="analysis-verdict significant">${side} has a statistically significant advantage (p${sb.p_value < 0.001 ? '<0.001' : '=' + sb.p_value}). <span class="help-icon" title="p-value: the probability of seeing this result if there were no real side bias. Below 0.05 is conventionally considered significant.">?</span></div>`;
+    } else {
+      html += `<div class="analysis-verdict not-significant">No significant side bias detected (p${sb.p_value < 0.001 ? '<0.001' : '=' + sb.p_value}). The pro/con split is consistent with chance. <span class="help-icon" title="p-value: the probability of seeing this result if there were no real side bias. Above 0.05 means we can't rule out chance.">?</span></div>`;
+    }
+  }
+
+  // Section 2: Model Strength
+  const ms = ANALYSIS.model_strength;
+  if (ms && ms.length > 0) {
+    html += `<div class="section-title">Model Strength <span class="help-icon" title="Win rate across all cross-model debates (excluding self-debates). The confidence interval shows the range where the true win rate likely falls.">?</span></div>`;
+    html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+    html += '<tr><th style="text-align:left">Model</th><th>Win Rate</th><th>95% CI <span class="help-icon" title="If two models\' intervals overlap, we can\'t confidently say one is better than the other with this sample size.">?</span></th><th>Record</th></tr>';
+    for (const m of ms) {
+      const barWidth = 200;
+      const ciBar = `<div class="ci-bar-container" style="max-width:${barWidth}px;display:inline-flex;width:100%">
+        <div class="ci-bar-fill" style="width:${m.win_pct}%;background:${cellGradient((m.win_pct - 50) / 50)}"></div>
+        <div class="ci-bar-marker" style="left:50%"></div>
+        <div class="ci-bar-range" style="left:${m.ci_low}%;width:${m.ci_high - m.ci_low}%"></div>
+      </div>`;
+      html += `<tr>`;
+      html += `<th class="row-header">${shortName(m.model_id)}</th>`;
+      html += `<td>${m.win_pct}%</td>`;
+      html += `<td style="min-width:220px">${ciBar}<div class="ci-bar-label">${m.ci_low}% - ${m.ci_high}%</div></td>`;
+      html += `<td>${m.wins}/${m.total}</td>`;
+      html += `</tr>`;
+    }
+    html += '</table></div>';
+  }
+
+  // Section 3: Rubric Profiles
+  const rp = ANALYSIS.rubric_profiles;
+  const cats = ANALYSIS.rubric_categories;
+  if (rp && rp.length > 0 && cats) {
+    html += `<div class="section-title">Rubric Profiles <span class="help-icon" title="Average scores judges gave each model across six debate quality dimensions. Higher is better (0-10 scale).">?</span></div>`;
+    html += '<div class="matrix-wrapper"><table class="rubric-heatmap">';
+    html += '<tr><th></th>';
+    for (const cat of cats) html += `<th>${cat.replace(/_/g, ' ')}</th>`;
+    html += '</tr>';
+    for (const m of rp) {
+      html += `<tr><th class="row-header">${shortName(m.model_id)}</th>`;
+      for (const cat of cats) {
+        const val = m.scores[cat];
+        if (val !== null) {
+          const ratio = (val - 5) / 5;
+          html += `<td style="background:${rubricGradient(val)}">${val.toFixed(1)}</td>`;
+        } else {
+          html += '<td style="opacity:0.3">-</td>';
+        }
+      }
+      html += '</tr>';
+    }
+    html += '</table></div>';
+  }
+
+  // Section 4: Power
+  const pw = ANALYSIS.power;
+  if (pw) {
+    html += `<div class="section-title">Statistical Power <span class="help-icon" title="Statistical power is the probability that a real difference between models will show up as significant in the results. 80% is the conventional target.">?</span></div>`;
+    html += `<div class="analysis-note">With <strong>${pw.median_judges_per_debate} judges per debate</strong>, `;
+    if (pw.min_detectable_effect_pct > 0) {
+      html += `you can reliably detect side-bias shifts of <strong>${pw.min_detectable_effect_pct} percentage points</strong> or larger.`;
+      if (pw.median_judges_per_debate < 3) {
+        html += ` Consider using <strong>3+ judges</strong> for narrower confidence intervals.`;
+      }
+    } else {
+      html += `insufficient data to estimate power.`;
+    }
+    html += `</div>`;
+  }
+
+  // Section 5: Topic Variability
+  const tv = ANALYSIS.topic_variability;
+  if (tv) {
+    html += `<div class="section-title">Topic Variability <span class="help-icon" title="How much does the pro/con balance vary across different debate motions? High variability means side advantage depends heavily on the topic.">?</span></div>`;
+    html += `<div class="analysis-note">Pro win rate ranges from <strong>${tv.range_low}%</strong> to <strong>${tv.range_high}%</strong> across topics (std: ${tv.std}%).</div>`;
+    html += `<div class="analysis-note">Most pro-favorable: <strong>${escapeHtml(tv.most_pro.motion)}</strong> (${tv.most_pro.pro_pct}% pro)</div>`;
+    html += `<div class="analysis-note">Most con-favorable: <strong>${escapeHtml(tv.most_con.motion)}</strong> (${tv.most_con.pro_pct}% pro)</div>`;
+    if (tv.chi2) {
+      html += `<div class="analysis-note">`;
+      if (tv.chi2.significant) {
+        html += `Side balance varies <strong>significantly</strong> across topics (chi-squared=${tv.chi2.statistic}, p=${tv.chi2.p_value}). <span class="help-icon" title="Chi-squared test: tests whether the pro/con split is independent of topic. A significant result means the topic strongly influences which side wins.">?</span>`;
+      } else {
+        html += `No significant variation in side balance across topics (chi-squared=${tv.chi2.statistic}, p=${tv.chi2.p_value}). <span class="help-icon" title="Chi-squared test: tests whether the pro/con split is independent of topic. A non-significant result means the side balance is reasonably consistent.">?</span>`;
+      }
+      html += `</div>`;
+    }
+  }
+
+  container.innerHTML = html;
+}
+
+function rubricGradient(val) {
+  if (val >= 7) return `rgba(34,197,94,${((val - 5) / 10).toFixed(2)})`;
+  if (val <= 4) return `rgba(239,68,68,${((5 - val) / 10).toFixed(2)})`;
+  return 'transparent';
+}
+
 function navigateToTopic(topicId) {
   const select = document.getElementById('topic-select');
   if (select) {
@@ -588,6 +711,7 @@ renderMotionResults();
 renderJudgeVotes();
 renderJudgeDebaterMatrix();
 renderJudgeAgreement();
+renderAnalysis();
 
 const topicCount = (SUMMARY.motions || []).length;
 if (topicCount <= 1) {

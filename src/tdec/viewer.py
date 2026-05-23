@@ -179,6 +179,219 @@ def _compute_motion_stats(run_dir: Path) -> list[dict]:
     return {"judge_ids": judge_ids, "motions": rows}
 
 
+def _compute_analysis_stats(run_dir: Path) -> dict:
+    import math
+
+    import numpy as np
+    from scipy.stats import binomtest, chi2_contingency
+
+    judgements = []
+    for f in sorted((run_dir / "judgements").glob("*.json")):
+        judgements.append(json.loads(f.read_text(encoding="utf-8")))
+
+    debates = {}
+    for f in sorted((run_dir / "debates").glob("*.json")):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        debates[d["id"]] = d
+
+    # ── Section 1: Side bias ──
+    pro_wins = sum(1 for j in judgements if (j.get("parsed") or {}).get("winner") == "pro")
+    con_wins = sum(1 for j in judgements if (j.get("parsed") or {}).get("winner") == "con")
+    total_decided = pro_wins + con_wins
+
+    if total_decided > 0:
+        bt = binomtest(pro_wins, total_decided, 0.5)
+        ci = bt.proportion_ci(method="wilson")
+        side_bias = {
+            "pro_wins": pro_wins,
+            "con_wins": con_wins,
+            "total": total_decided,
+            "pro_pct": round(100 * pro_wins / total_decided, 1),
+            "p_value": max(round(float(bt.pvalue), 4), 0.0001),
+            "ci_low": round(100 * ci.low, 1),
+            "ci_high": round(100 * ci.high, 1),
+            "significant": bool(bt.pvalue < 0.05),
+        }
+    else:
+        side_bias = None
+
+    # ── Section 2: Model win rates with CIs ──
+    debater_ids = sorted({
+        d["pro_model"]["id"] for d in debates.values()
+    } | {
+        d["con_model"]["id"] for d in debates.values()
+    })
+
+    model_strength = []
+    for mid in debater_ids:
+        wins = 0
+        total = 0
+        for j in judgements:
+            debate = debates.get(j["debate_id"])
+            if not debate:
+                continue
+            pro_id = debate["pro_model"]["id"]
+            con_id = debate["con_model"]["id"]
+            if pro_id == con_id:
+                continue
+            winner = (j.get("parsed") or {}).get("winner")
+            if winner not in ("pro", "con"):
+                continue
+            if mid == pro_id:
+                total += 1
+                if winner == "pro":
+                    wins += 1
+            elif mid == con_id:
+                total += 1
+                if winner == "con":
+                    wins += 1
+
+        if total > 0:
+            bt = binomtest(wins, total)
+            ci = bt.proportion_ci(method="wilson")
+            model_strength.append({
+                "model_id": mid,
+                "wins": wins,
+                "total": total,
+                "win_pct": round(100 * wins / total, 1),
+                "ci_low": round(100 * ci.low, 1),
+                "ci_high": round(100 * ci.high, 1),
+            })
+
+    model_strength.sort(key=lambda m: m["win_pct"], reverse=True)
+
+    # ── Section 3: Rubric profiles ──
+    categories = [
+        "breadth", "responsiveness", "evidence_quality",
+        "moral_reasoning", "institutional_reasoning", "strategic_clarity",
+    ]
+    rubric_scores: dict[str, dict[str, list]] = {mid: {c: [] for c in categories} for mid in debater_ids}
+
+    for j in judgements:
+        debate = debates.get(j["debate_id"])
+        if not debate:
+            continue
+        parsed = j.get("parsed") or {}
+        rubric = parsed.get("rubric") or {}
+        pro_id = debate["pro_model"]["id"]
+        con_id = debate["con_model"]["id"]
+        for cat in categories:
+            scores = rubric.get(cat)
+            if not isinstance(scores, dict):
+                continue
+            if scores.get("pro") is not None and pro_id in rubric_scores:
+                rubric_scores[pro_id][cat].append(scores["pro"])
+            if scores.get("con") is not None and con_id in rubric_scores:
+                rubric_scores[con_id][cat].append(scores["con"])
+
+    rubric_profiles = []
+    for mid in debater_ids:
+        profile = {"model_id": mid, "scores": {}}
+        for cat in categories:
+            vals = rubric_scores[mid][cat]
+            profile["scores"][cat] = round(float(np.mean(vals)), 2) if vals else None
+        rubric_profiles.append(profile)
+
+    # ── Section 4: Power ──
+    judges_per_debate = []
+    for did in debates:
+        n = sum(1 for j in judgements if j["debate_id"] == did)
+        if n > 0:
+            judges_per_debate.append(n)
+
+    avg_judges = round(float(np.mean(judges_per_debate)), 1) if judges_per_debate else 0
+    n_median = int(float(np.median(judges_per_debate))) if judges_per_debate else 0
+
+    if total_decided > 0 and n_median > 0:
+        p_hat = pro_wins / total_decided
+        se = math.sqrt(p_hat * (1 - p_hat) / n_median)
+        mde = round(100 * 1.96 * se * 2, 1) if se > 0 else 0
+    else:
+        mde = 0
+
+    power_info = {
+        "avg_judges_per_debate": avg_judges,
+        "median_judges_per_debate": n_median,
+        "min_detectable_effect_pct": mde,
+    }
+
+    # ── Section 5: Topic variability ──
+    topic_variability = None
+    topic_ids = sorted({d["topic"]["id"] for d in debates.values()})
+    if len(topic_ids) > 1:
+        topic_pro_pcts = []
+        topic_labels = []
+        for tid in topic_ids:
+            tp = sum(
+                1 for j in judgements
+                if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
+                and (j.get("parsed") or {}).get("winner") == "pro"
+            )
+            tc = sum(
+                1 for j in judgements
+                if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
+                and (j.get("parsed") or {}).get("winner") == "con"
+            )
+            tt = tp + tc
+            if tt > 0:
+                topic_pro_pcts.append(100 * tp / tt)
+                motion = ""
+                for d in debates.values():
+                    if d["topic"]["id"] == tid:
+                        motion = d["topic"].get("motion", tid)
+                        break
+                topic_labels.append({"topic_id": tid, "motion": motion, "pro_pct": round(100 * tp / tt, 1)})
+
+        if topic_pro_pcts:
+            arr = np.array(topic_pro_pcts)
+            most_pro = max(topic_labels, key=lambda t: t["pro_pct"])
+            most_con = min(topic_labels, key=lambda t: t["pro_pct"])
+
+            chi2_result = None
+            try:
+                table = []
+                for tid in topic_ids:
+                    tp = sum(
+                        1 for j in judgements
+                        if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
+                        and (j.get("parsed") or {}).get("winner") == "pro"
+                    )
+                    tc = sum(
+                        1 for j in judgements
+                        if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
+                        and (j.get("parsed") or {}).get("winner") == "con"
+                    )
+                    if tp + tc > 0:
+                        table.append([tp, tc])
+                if len(table) >= 2:
+                    res = chi2_contingency(table)
+                    chi2_result = {
+                        "statistic": round(float(res.statistic), 2),
+                        "p_value": round(float(res.pvalue), 4),
+                        "significant": bool(float(res.pvalue) < 0.05),
+                    }
+            except Exception:
+                pass
+
+            topic_variability = {
+                "range_low": round(float(arr.min()), 1),
+                "range_high": round(float(arr.max()), 1),
+                "std": round(float(arr.std()), 1),
+                "most_pro": most_pro,
+                "most_con": most_con,
+                "chi2": chi2_result,
+            }
+
+    return {
+        "side_bias": side_bias,
+        "model_strength": model_strength,
+        "rubric_profiles": rubric_profiles,
+        "rubric_categories": categories,
+        "power": power_info,
+        "topic_variability": topic_variability,
+    }
+
+
 def _compute_word_counts(run_dir: Path) -> dict:
     debate_words = 0
     judgement_words = 0
@@ -216,6 +429,7 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
     word_counts = _compute_word_counts(run_dir)
     judge_stats = _compute_judge_stats(run_dir)
     motion_stats = _compute_motion_stats(run_dir)
+    analysis_stats = _compute_analysis_stats(run_dir)
     env = _jinja_env()
     template = env.get_template("viewer.html")
 
@@ -232,6 +446,7 @@ def serve(run_dir: Path, port: int | None = None, *, open_browser: bool = True) 
             word_counts=json.dumps(word_counts),
             judge_stats=json.dumps(judge_stats),
             motion_stats=json.dumps(motion_stats),
+            analysis_stats=json.dumps(analysis_stats),
             inline_css=None,
         )
 
@@ -279,6 +494,7 @@ def export_html(run_dir: Path, output: Path) -> None:
     word_counts = _compute_word_counts(run_dir)
     judge_stats = _compute_judge_stats(run_dir)
     motion_stats = _compute_motion_stats(run_dir)
+    analysis_stats = _compute_analysis_stats(run_dir)
     html = template.render(
         run_name=run_dir.name,
         summary=json.dumps(summary),
@@ -288,6 +504,7 @@ def export_html(run_dir: Path, output: Path) -> None:
         word_counts=json.dumps(word_counts),
         judge_stats=json.dumps(judge_stats),
         motion_stats=json.dumps(motion_stats),
+        analysis_stats=json.dumps(analysis_stats),
         inline_css=css,
     )
     output.write_text(html, encoding="utf-8")
