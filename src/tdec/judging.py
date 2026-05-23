@@ -10,6 +10,8 @@ from tdec.debate_types import DebateTranscript, JudgeAttempt, Judgement, ModelCa
 from tdec.models import ChatModel
 from tdec.prompts import PromptSet
 
+_CACHE_CONTROL = {"type": "ephemeral"}
+
 
 def judge_debate(
     *,
@@ -21,8 +23,14 @@ def judge_debate(
 ) -> Judgement:
     config = judging_config or JudgingConfig()
     base_messages = [
-        {"role": "system", "content": prompt_set.render_judge_system(style=judge_model.style)},
-        {"role": "user", "content": prompt_set.render_judge(transcript=transcript)},
+        {"role": "system", "content": [
+            {"type": "text", "text": prompt_set.render_judge_system(style=judge_model.style),
+             "cache_control": _CACHE_CONTROL},
+        ]},
+        {"role": "user", "content": [
+            {"type": "text", "text": prompt_set.render_judge(transcript=transcript),
+             "cache_control": _CACHE_CONTROL},
+        ]},
     ]
     attempts: list[JudgeAttempt] = []
 

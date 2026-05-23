@@ -10,6 +10,16 @@ from tdec.debate_types import DebateTranscript, DebateTurn, ModelCallResult, Sid
 from tdec.models import ChatModel
 from tdec.prompts import PromptSet
 
+_CACHE_CONTROL = {"type": "ephemeral"}
+
+
+def _cached_msg(role: str, text: str) -> dict:
+    return {"role": role, "content": [{"type": "text", "text": text, "cache_control": _CACHE_CONTROL}]}
+
+
+def _plain_msg(role: str, text: str) -> dict:
+    return {"role": role, "content": text}
+
 
 class OpeningCache:
     """Thread-safe cache for reusing opening statements across debates."""
@@ -51,9 +61,9 @@ def run_debate(
 ) -> DebateTranscript:
     debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
     turns: list[DebateTurn] = []
-    histories: dict[Side, list[dict[str, str]]] = {
-        "pro": [{"role": "system", "content": prompt_set.render_debater_system(strategy=pro_model.strategy)}],
-        "con": [{"role": "system", "content": prompt_set.render_debater_system(strategy=con_model.strategy)}],
+    histories: dict[Side, list[dict]] = {
+        "pro": [_cached_msg("system", prompt_set.render_debater_system(strategy=pro_model.strategy))],
+        "con": [_cached_msg("system", prompt_set.render_debater_system(strategy=con_model.strategy))],
     }
 
     for round_number in range(1, rounds + 1):
@@ -72,7 +82,7 @@ def run_debate(
                     motion=topic.motion, context=topic.context,
                     side=side, round_number=round_number, rounds=rounds,
                 )
-            histories[side].append({"role": "user", "content": prompt})
+            histories[side].append(_plain_msg("user", prompt))
 
             if is_pro_opening and opening_cache is not None:
                 cache_key = (model.id, topic.id, "pro")
@@ -82,7 +92,7 @@ def run_debate(
             else:
                 result = client.call(model, histories[side])
 
-            histories[side].append({"role": "assistant", "content": result.content})
+            histories[side].append(_plain_msg("assistant", result.content))
 
             turn = DebateTurn(
                 speaker_label=label,
@@ -117,9 +127,9 @@ def run_parallel_debate(
 ) -> DebateTranscript:
     debate_id = f"{topic.id}__{pro_model.id}_pro__{con_model.id}_con"
     turns: list[DebateTurn] = []
-    histories: dict[Side, list[dict[str, str]]] = {
-        "pro": [{"role": "system", "content": prompt_set.render_debater_system(strategy=pro_model.strategy)}],
-        "con": [{"role": "system", "content": prompt_set.render_debater_system(strategy=con_model.strategy)}],
+    histories: dict[Side, list[dict]] = {
+        "pro": [_cached_msg("system", prompt_set.render_debater_system(strategy=pro_model.strategy))],
+        "con": [_cached_msg("system", prompt_set.render_debater_system(strategy=con_model.strategy))],
     }
 
     sides: list[tuple[Side, DebaterConfig, str]] = [
@@ -139,7 +149,7 @@ def run_parallel_debate(
                     motion=topic.motion, context=topic.context,
                     side=side, round_number=round_number, rounds=rounds,
                 )
-            histories[side].append({"role": "user", "content": prompt})
+            histories[side].append(_plain_msg("user", prompt))
 
         def _call_side(side: Side, model: DebaterConfig) -> ModelCallResult:
             if round_number == 1 and opening_cache is not None:
@@ -160,7 +170,7 @@ def run_parallel_debate(
         round_turns: list[DebateTurn] = []
         for side, model, label in sides:
             result = results[side]
-            histories[side].append({"role": "assistant", "content": result.content})
+            histories[side].append(_plain_msg("assistant", result.content))
             turn = DebateTurn(
                 speaker_label=label,
                 speaker_model_id=model.id,
@@ -184,18 +194,18 @@ def run_parallel_debate(
     )
 
 
-def _share_turn(histories: dict[Side, list[dict[str, str]]], turn: DebateTurn) -> None:
+def _share_turn(histories: dict[Side, list[dict]], turn: DebateTurn) -> None:
     message = (
         f"Opponent turn just delivered by Debater {turn.speaker_label} "
         f"({turn.side}, turn {turn.turn_number}):\n\n{turn.content}"
     )
     for side in histories:
         if side != turn.side:
-            histories[side].append({"role": "user", "content": message})
+            histories[side].append(_plain_msg("user", message))
 
 
 def _share_round(
-    histories: dict[Side, list[dict[str, str]]], round_turns: list[DebateTurn]
+    histories: dict[Side, list[dict]], round_turns: list[DebateTurn]
 ) -> None:
     for turn in round_turns:
         message = (
@@ -204,7 +214,7 @@ def _share_round(
         )
         for side in histories:
             if side != turn.side:
-                histories[side].append({"role": "user", "content": message})
+                histories[side].append(_plain_msg("user", message))
 
 
 def debate_pairings(
