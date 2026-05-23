@@ -553,9 +553,9 @@ function renderAnalysis() {
     html += `<div class="ci-bar-label">Pro ${sb.pro_pct}% (95% CI: ${sb.ci_low}%-${sb.ci_high}%) &middot; ${sb.pro_wins}P/${sb.con_wins}C of ${sb.total} decided</div>`;
     if (sb.significant) {
       const side = sb.pro_pct > 50 ? 'Pro' : 'Con';
-      html += `<div class="analysis-verdict significant">${side} has a statistically significant advantage (p${sb.p_value < 0.001 ? '<0.001' : '=' + sb.p_value}). <span class="help-icon" title="p-value: the probability of seeing this result if there were no real side bias. Below 0.05 is conventionally considered significant.">?</span></div>`;
+      html += `<div class="analysis-verdict significant">${side} has a statistically significant advantage (${formatPval(sb.p_value)}). <span class="help-icon" title="p-value: the probability of seeing this result if there were no real side bias. Below 0.05 is conventionally considered significant.">?</span></div>`;
     } else {
-      html += `<div class="analysis-verdict not-significant">No significant side bias detected (p${sb.p_value < 0.001 ? '<0.001' : '=' + sb.p_value}). The pro/con split is consistent with chance. <span class="help-icon" title="p-value: the probability of seeing this result if there were no real side bias. Above 0.05 means we can't rule out chance.">?</span></div>`;
+      html += `<div class="analysis-verdict not-significant">No significant side bias detected (${formatPval(sb.p_value)}). The pro/con split is consistent with chance. <span class="help-icon" title="p-value: the probability of seeing this result if there were no real side bias. Above 0.05 means we can't rule out chance.">?</span></div>`;
     }
   }
 
@@ -609,39 +609,55 @@ function renderAnalysis() {
 
   // Section 4: Power
   const pw = ANALYSIS.power;
-  if (pw) {
-    html += `<div class="section-title">Statistical Power <span class="help-icon" title="Statistical power is the probability that a real difference between models will show up as significant in the results. 80% is the conventional target.">?</span></div>`;
-    html += `<div class="analysis-note">With <strong>${pw.median_judges_per_debate} judges per debate</strong>, `;
-    if (pw.min_detectable_effect_pct > 0) {
-      html += `you can reliably detect side-bias shifts of <strong>${pw.min_detectable_effect_pct} percentage points</strong> or larger.`;
-      if (pw.median_judges_per_debate < 3) {
-        html += ` Consider using <strong>3+ judges</strong> for narrower confidence intervals.`;
-      }
-    } else {
-      html += `insufficient data to estimate power.`;
+  if (pw && pw.total_observations > 0) {
+    html += `<div class="section-title">Statistical Power <span class="help-icon" title="How small a difference can this experiment reliably detect? Smaller is better. The minimum detectable effect (MDE) depends on the total number of judge votes.">?</span></div>`;
+    html += `<div class="analysis-note">Based on <strong>${pw.total_observations} judge votes</strong> across <strong>${pw.total_debates} debates</strong> (median ${pw.median_judges_per_debate} judges per debate):</div>`;
+    html += `<div class="analysis-note">Minimum detectable effect at 80% power: <strong>${pw.min_detectable_effect_pct} percentage points</strong> shift in win rate. <span class="help-icon" title="The smallest real difference in win rates that this experiment has an 80% chance of detecting as statistically significant. Differences smaller than this may go unnoticed.">?</span></div>`;
+    if (pw.judges_for_5pct_mde > pw.median_judges_per_debate) {
+      html += `<div class="analysis-note">To detect a 5-point win rate difference, use <strong>${pw.judges_for_5pct_mde} judges per debate</strong>.</div>`;
     }
-    html += `</div>`;
   }
 
-  // Section 5: Topic Variability
-  const tv = ANALYSIS.topic_variability;
-  if (tv) {
-    html += `<div class="section-title">Topic Variability <span class="help-icon" title="How much does the pro/con balance vary across different debate motions? High variability means side advantage depends heavily on the topic.">?</span></div>`;
-    html += `<div class="analysis-note">Pro win rate ranges from <strong>${tv.range_low}%</strong> to <strong>${tv.range_high}%</strong> across topics (std: ${tv.std}%).</div>`;
-    html += `<div class="analysis-note">Most pro-favorable: <strong>${escapeHtml(tv.most_pro.motion)}</strong> (${tv.most_pro.pro_pct}% pro)</div>`;
-    html += `<div class="analysis-note">Most con-favorable: <strong>${escapeHtml(tv.most_con.motion)}</strong> (${tv.most_con.pro_pct}% pro)</div>`;
-    if (tv.chi2) {
-      html += `<div class="analysis-note">`;
-      if (tv.chi2.significant) {
-        html += `Side balance varies <strong>significantly</strong> across topics (chi-squared=${tv.chi2.statistic}, p=${tv.chi2.p_value}). <span class="help-icon" title="Chi-squared test: tests whether the pro/con split is independent of topic. A significant result means the topic strongly influences which side wins.">?</span>`;
-      } else {
-        html += `No significant variation in side balance across topics (chi-squared=${tv.chi2.statistic}, p=${tv.chi2.p_value}). <span class="help-icon" title="Chi-squared test: tests whether the pro/con split is independent of topic. A non-significant result means the side balance is reasonably consistent.">?</span>`;
-      }
-      html += `</div>`;
+  // Section 5: ANOVA
+  const av = ANALYSIS.anova;
+  if (av) {
+    html += `<div class="section-title">Analysis of Variance <span class="help-icon" title="ANOVA decomposes the total variation in judge scores into portions explained by different factors. It answers: how much of what we observe is due to model choice, how much to topic, and how much is unexplained noise?">?</span></div>`;
+    html += `<div class="analysis-note">Response variable: <strong>${av.response}</strong></div>`;
+    html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+    html += '<tr><th style="text-align:left">Source</th><th>SS <span class="help-icon" title="Sum of Squares: total amount of variation explained by this factor.">?</span></th><th>df</th><th>MS</th><th>F <span class="help-icon" title="F-statistic: ratio of explained variance to unexplained variance. Larger values mean the factor has a stronger effect.">?</span></th><th>p-value</th><th>% Variance <span class="help-icon" title="Percentage of total variation in scores explained by this factor. Higher means this factor matters more.">?</span></th></tr>';
+    for (const row of av.rows) {
+      const sig = row.significant === true ? ' style="color:var(--accent);font-weight:600"' : '';
+      html += '<tr>';
+      html += `<td style="text-align:left;font-weight:500">${row.source}</td>`;
+      html += `<td>${row.ss}</td>`;
+      html += `<td>${row.df}</td>`;
+      html += `<td>${row.ms}</td>`;
+      html += `<td>${row.f !== null ? row.f : '-'}</td>`;
+      html += `<td${sig}>${row.p_value !== null ? formatPval(row.p_value) : '-'}</td>`;
+      html += `<td>${row.pct_variance}%</td>`;
+      html += '</tr>';
+    }
+    html += '</table></div>';
+
+    const sigRows = av.rows.filter(r => r.significant === true);
+    const nonsigRows = av.rows.filter(r => r.significant === false);
+    if (sigRows.length > 0) {
+      const parts = sigRows.map(r => `<strong>${r.source}</strong> (${r.pct_variance}% of variance, ${formatPval(r.p_value)})`);
+      html += `<div class="analysis-verdict significant">Significant effects: ${parts.join(', ')}.</div>`;
+    }
+    if (nonsigRows.length > 0) {
+      const parts = nonsigRows.map(r => `${r.source} (${formatPval(r.p_value)})`);
+      html += `<div class="analysis-verdict not-significant">Not significant: ${parts.join(', ')}.</div>`;
     }
   }
 
   container.innerHTML = html;
+}
+
+function formatPval(p) {
+  if (p < 0.001) return 'p<0.001';
+  if (p < 0.01) return 'p=' + p.toFixed(3);
+  return 'p=' + p.toFixed(3);
 }
 
 function rubricGradient(val) {

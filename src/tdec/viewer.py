@@ -183,7 +183,7 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
     import math
 
     import numpy as np
-    from scipy.stats import binomtest, chi2_contingency
+    from scipy.stats import binomtest
 
     judgements = []
     for f in sorted((run_dir / "judgements").glob("*.json")):
@@ -207,7 +207,7 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
             "con_wins": con_wins,
             "total": total_decided,
             "pro_pct": round(100 * pro_wins / total_decided, 1),
-            "p_value": max(round(float(bt.pvalue), 4), 0.0001),
+            "p_value": float(bt.pvalue),
             "ci_low": round(100 * ci.low, 1),
             "ci_high": round(100 * ci.high, 1),
             "significant": bool(bt.pvalue < 0.05),
@@ -299,87 +299,134 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
         if n > 0:
             judges_per_debate.append(n)
 
-    avg_judges = round(float(np.mean(judges_per_debate)), 1) if judges_per_debate else 0
     n_median = int(float(np.median(judges_per_debate))) if judges_per_debate else 0
+    n_total = total_decided
 
-    if total_decided > 0 and n_median > 0:
-        p_hat = pro_wins / total_decided
-        se = math.sqrt(p_hat * (1 - p_hat) / n_median)
-        mde = round(100 * 1.96 * se * 2, 1) if se > 0 else 0
+    if n_total > 0:
+        se = math.sqrt(0.5 * 0.5 / n_total)
+        mde = round(100 * 2.8 * se, 1)
+        judges_for_5pct = max(1, math.ceil(((2.8 * 0.5) / (0.05)) ** 2 / len(debates))) if debates else 0
     else:
         mde = 0
+        judges_for_5pct = 0
 
     power_info = {
-        "avg_judges_per_debate": avg_judges,
         "median_judges_per_debate": n_median,
+        "total_observations": n_total,
+        "total_debates": len(debates),
         "min_detectable_effect_pct": mde,
+        "judges_for_5pct_mde": judges_for_5pct,
     }
 
-    # ── Section 5: Topic variability ──
-    topic_variability = None
+    # ── Section 5: ANOVA (model x topic) ──
+    from scipy.stats import f as f_dist
+
+    anova = None
     topic_ids = sorted({d["topic"]["id"] for d in debates.values()})
-    if len(topic_ids) > 1:
-        topic_pro_pcts = []
-        topic_labels = []
-        for tid in topic_ids:
-            tp = sum(
-                1 for j in judgements
-                if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
-                and (j.get("parsed") or {}).get("winner") == "pro"
+    if len(topic_ids) > 1 and len(debater_ids) > 1:
+        scores_by_cell: dict[tuple[str, str], list[float]] = {}
+        for j in judgements:
+            debate = debates.get(j["debate_id"])
+            if not debate:
+                continue
+            parsed = j.get("parsed") or {}
+            pro_score = parsed.get("pro_score")
+            con_score = parsed.get("con_score")
+            if pro_score is None or con_score is None:
+                continue
+            pro_id = debate["pro_model"]["id"]
+            con_id = debate["con_model"]["id"]
+            if pro_id == con_id:
+                continue
+            tid = debate["topic"]["id"]
+            margin = pro_score - con_score
+            scores_by_cell.setdefault((pro_id, tid), []).append(margin)
+
+        all_margins = []
+        for vals in scores_by_cell.values():
+            all_margins.extend(vals)
+
+        if len(all_margins) >= 4:
+            grand_mean = float(np.mean(all_margins))
+            n_obs = len(all_margins)
+
+            model_means = {}
+            for mid in debater_ids:
+                vals = [v for (m, t), vs in scores_by_cell.items() if m == mid for v in vs]
+                if vals:
+                    model_means[mid] = float(np.mean(vals))
+
+            topic_means = {}
+            for tid in topic_ids:
+                vals = [v for (m, t), vs in scores_by_cell.items() if t == tid for v in vs]
+                if vals:
+                    topic_means[tid] = float(np.mean(vals))
+
+            ss_model = sum(
+                len([v for (m, t), vs in scores_by_cell.items() if m == mid for v in vs])
+                * (model_means.get(mid, grand_mean) - grand_mean) ** 2
+                for mid in debater_ids if mid in model_means
             )
-            tc = sum(
-                1 for j in judgements
-                if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
-                and (j.get("parsed") or {}).get("winner") == "con"
+            ss_topic = sum(
+                len([v for (m, t), vs in scores_by_cell.items() if t == tid for v in vs])
+                * (topic_means.get(tid, grand_mean) - grand_mean) ** 2
+                for tid in topic_ids if tid in topic_means
             )
-            tt = tp + tc
-            if tt > 0:
-                topic_pro_pcts.append(100 * tp / tt)
-                motion = ""
-                for d in debates.values():
-                    if d["topic"]["id"] == tid:
-                        motion = d["topic"].get("motion", tid)
-                        break
-                topic_labels.append({"topic_id": tid, "motion": motion, "pro_pct": round(100 * tp / tt, 1)})
 
-        if topic_pro_pcts:
-            arr = np.array(topic_pro_pcts)
-            most_pro = max(topic_labels, key=lambda t: t["pro_pct"])
-            most_con = min(topic_labels, key=lambda t: t["pro_pct"])
+            ss_total = float(np.sum((np.array(all_margins) - grand_mean) ** 2))
+            ss_residual = max(ss_total - ss_model - ss_topic, 0.001)
 
-            chi2_result = None
-            try:
-                table = []
-                for tid in topic_ids:
-                    tp = sum(
-                        1 for j in judgements
-                        if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
-                        and (j.get("parsed") or {}).get("winner") == "pro"
-                    )
-                    tc = sum(
-                        1 for j in judgements
-                        if debates.get(j["debate_id"], {}).get("topic", {}).get("id") == tid
-                        and (j.get("parsed") or {}).get("winner") == "con"
-                    )
-                    if tp + tc > 0:
-                        table.append([tp, tc])
-                if len(table) >= 2:
-                    res = chi2_contingency(table)
-                    chi2_result = {
-                        "statistic": round(float(res.statistic), 2),
-                        "p_value": round(float(res.pvalue), 4),
-                        "significant": bool(float(res.pvalue) < 0.05),
-                    }
-            except Exception:
-                pass
+            df_model = max(len(model_means) - 1, 1)
+            df_topic = max(len(topic_means) - 1, 1)
+            df_residual = max(n_obs - df_model - df_topic - 1, 1)
 
-            topic_variability = {
-                "range_low": round(float(arr.min()), 1),
-                "range_high": round(float(arr.max()), 1),
-                "std": round(float(arr.std()), 1),
-                "most_pro": most_pro,
-                "most_con": most_con,
-                "chi2": chi2_result,
+            ms_model = ss_model / df_model
+            ms_topic = ss_topic / df_topic
+            ms_residual = ss_residual / df_residual
+
+            f_model = ms_model / ms_residual
+            f_topic = ms_topic / ms_residual
+            p_model = float(f_dist.sf(f_model, df_model, df_residual))
+            p_topic = float(f_dist.sf(f_topic, df_topic, df_residual))
+
+            pct_model = round(100 * ss_model / ss_total, 1) if ss_total > 0 else 0
+            pct_topic = round(100 * ss_topic / ss_total, 1) if ss_total > 0 else 0
+            pct_residual = round(100 * ss_residual / ss_total, 1) if ss_total > 0 else 0
+
+            anova = {
+                "response": "Score margin (pro_score - con_score)",
+                "rows": [
+                    {
+                        "source": "Model (pro)",
+                        "ss": round(ss_model, 1),
+                        "df": df_model,
+                        "ms": round(ms_model, 1),
+                        "f": round(f_model, 2),
+                        "p_value": p_model,
+                        "pct_variance": pct_model,
+                        "significant": bool(p_model < 0.05),
+                    },
+                    {
+                        "source": "Topic",
+                        "ss": round(ss_topic, 1),
+                        "df": df_topic,
+                        "ms": round(ms_topic, 1),
+                        "f": round(f_topic, 2),
+                        "p_value": p_topic,
+                        "pct_variance": pct_topic,
+                        "significant": bool(p_topic < 0.05),
+                    },
+                    {
+                        "source": "Residual",
+                        "ss": round(ss_residual, 1),
+                        "df": df_residual,
+                        "ms": round(ms_residual, 1),
+                        "f": None,
+                        "p_value": None,
+                        "pct_variance": pct_residual,
+                        "significant": None,
+                    },
+                ],
             }
 
     return {
@@ -388,7 +435,7 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
         "rubric_profiles": rubric_profiles,
         "rubric_categories": categories,
         "power": power_info,
-        "topic_variability": topic_variability,
+        "anova": anova,
     }
 
 
