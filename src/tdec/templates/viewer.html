@@ -773,6 +773,37 @@ function renderComparison() {
     }
   }
 
+  // Breakdown tables per factor
+  if (CROSS_RUN.breakdowns) {
+    const judges = CROSS_RUN.judge_ids || [];
+    for (const [factor, rows] of Object.entries(CROSS_RUN.breakdowns)) {
+      html += `<div class="section-title">${factor} Breakdown</div>`;
+      html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+      html += `<tr><th style="text-align:left">${factor}</th><th>Pro</th><th>Con</th><th>Pro %</th>`;
+      for (const jid of judges) html += `<th>${shortName(jid)}</th>`;
+      html += '</tr>';
+      for (const row of rows) {
+        const ratio = (row.pro_pct - 50) / 50;
+        html += '<tr>';
+        html += `<td style="text-align:left;font-weight:500">${row.level}</td>`;
+        html += `<td>${row.pro}</td><td>${row.con}</td>`;
+        html += `<td style="background:${cellGradient(ratio)}">${row.pro_pct}%</td>`;
+        for (const jid of judges) {
+          const jd = row.per_judge[jid];
+          if (jd) {
+            const jt = jd.pro + jd.con;
+            const jpct = jt > 0 ? (jd.pro / jt - 0.5) * 2 : 0;
+            html += `<td style="background:${cellGradient(jpct)}">${jd.pro}/${jd.con}</td>`;
+          } else {
+            html += '<td>-</td>';
+          }
+        }
+        html += '</tr>';
+      }
+      html += '</table></div>';
+    }
+  }
+
   container.innerHTML = html;
 }
 

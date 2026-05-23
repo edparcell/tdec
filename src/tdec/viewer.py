@@ -543,10 +543,55 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
         "significant": None,
     })
 
+    judge_ids = sorted({
+        j.get("judge_model_id", "")
+        for r, rd in zip(runs, run_dirs)
+        for f in (rd / "judgements").glob("*.json")
+        for j in [json.loads(f.read_text(encoding="utf-8"))]
+        if j.get("judge_model_id")
+    })
+
+    breakdowns = {}
+    for factor_name, levels in varying.items():
+        rows_bd = []
+        for level in levels:
+            level_judgements = []
+            for r, rd in zip(runs, run_dirs):
+                conds = r["summary"].get("conditions", {})
+                cond_val = conds.get(factor_name, "false" if factor_name == "label_swap" else "")
+                if cond_val != level:
+                    continue
+                for f in (rd / "judgements").glob("*.json"):
+                    j = json.loads(f.read_text(encoding="utf-8"))
+                    winner = (j.get("parsed") or {}).get("winner")
+                    if winner in ("pro", "con"):
+                        level_judgements.append(j)
+
+            pro = sum(1 for j in level_judgements if j["parsed"]["winner"] == "pro")
+            con = sum(1 for j in level_judgements if j["parsed"]["winner"] == "con")
+            total = pro + con
+            per_judge = {}
+            for jid in judge_ids:
+                jj = [j for j in level_judgements if j["judge_model_id"] == jid]
+                jp = sum(1 for j in jj if j["parsed"]["winner"] == "pro")
+                jc = sum(1 for j in jj if j["parsed"]["winner"] == "con")
+                per_judge[jid] = {"pro": jp, "con": jc}
+            rows_bd.append({
+                "level": level,
+                "pro": pro,
+                "con": con,
+                "total": total,
+                "pro_pct": round(100 * pro / total, 1) if total else 0,
+                "per_judge": per_judge,
+            })
+        breakdowns[factor_name] = rows_bd
+
     return {
         "varying_conditions": {k: list(v) for k, v in varying.items()},
         "run_count": len(runs),
         "run_names": [r["run_name"] for r in runs],
+        "judge_ids": judge_ids,
+        "breakdowns": breakdowns,
         "anova": {
             "response": "Score margin (pro_score - con_score) across all runs",
             "n_observations": len(observations),
