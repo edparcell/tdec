@@ -708,12 +708,39 @@ function renderAnalysis() {
     const vc = CROSS_RUN.varying_conditions;
     const keys = Object.keys(vc);
     if (keys.length > 0) {
-      html += `<div class="section-title">Cross-Run Comparison <span class="help-icon" title="Comparing ${CROSS_RUN.run_count} runs that differ in experimental conditions.">?</span></div>`;
-      html += `<div class="analysis-note"><strong>${CROSS_RUN.run_count} runs loaded</strong> with varying conditions:</div>`;
-      for (const [key, vals] of Object.entries(vc)) {
-        html += `<div class="analysis-note">&bull; <strong>${key}</strong>: ${vals.join(', ')}</div>`;
+      html += `<div class="section-title">Cross-Run Analysis <span class="help-icon" title="ANOVA decomposing score variation across ${CROSS_RUN.run_count} runs with different experimental conditions.">?</span></div>`;
+      html += `<div class="analysis-note"><strong>${CROSS_RUN.run_count} runs</strong> with varying conditions: `;
+      html += keys.map(k => `<strong>${k}</strong> (${vc[k].join(', ')})`).join(', ');
+      html += `</div>`;
+
+      if (CROSS_RUN.anova) {
+        const cra = CROSS_RUN.anova;
+        html += `<div class="analysis-note">Response: <strong>${cra.response}</strong> (${cra.n_observations} observations)</div>`;
+        html += '<div class="matrix-wrapper"><table class="judge-matrix">';
+        html += '<tr><th style="text-align:left">Source</th><th>SS</th><th>df</th><th>MS</th><th>F</th><th>p-value</th><th>% Variance</th></tr>';
+        for (const row of cra.rows) {
+          const sig = row.significant === true ? ' style="color:var(--accent);font-weight:600"' : '';
+          html += '<tr>';
+          html += `<td style="text-align:left;font-weight:500">${row.source}</td>`;
+          html += `<td>${row.ss}</td><td>${row.df}</td><td>${row.ms}</td>`;
+          html += `<td>${row.f !== null ? row.f : '-'}</td>`;
+          html += `<td${sig}>${row.p_value !== null ? formatPval(row.p_value) : '-'}</td>`;
+          html += `<td>${row.pct_variance}%</td>`;
+          html += '</tr>';
+        }
+        html += '</table></div>';
+
+        const sigRows = cra.rows.filter(r => r.significant === true);
+        if (sigRows.length > 0) {
+          const parts = sigRows.map(r => `<strong>${r.source}</strong> (${r.pct_variance}%, ${formatPval(r.p_value)})`);
+          html += `<div class="analysis-verdict significant">Significant effects: ${parts.join(', ')}.</div>`;
+        }
+        const nonsigRows = cra.rows.filter(r => r.significant === false);
+        if (nonsigRows.length > 0) {
+          const parts = nonsigRows.map(r => `${r.source} (${formatPval(r.p_value)})`);
+          html += `<div class="analysis-verdict not-significant">Not significant: ${parts.join(', ')}.</div>`;
+        }
       }
-      html += `<div class="analysis-note">Use the run selector above to switch between conditions and compare results across tabs.</div>`;
     } else if (CROSS_RUN.note) {
       html += `<div class="analysis-note">${CROSS_RUN.note}</div>`;
     }

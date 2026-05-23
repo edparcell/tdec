@@ -439,35 +439,119 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
     }
 
 
-def _compute_cross_run_analysis(runs: list[dict]) -> dict | None:
+def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict | None:
+    import numpy as np
+    from scipy.stats import f as f_dist
+
     if len(runs) < 2:
         return None
 
-    all_conditions = {}
+    all_condition_keys = set()
     for r in runs:
-        conds = r["summary"].get("conditions", {})
-        for k, v in conds.items():
-            all_conditions.setdefault(k, set()).add(v)
+        all_condition_keys.update(r["summary"].get("conditions", {}).keys())
+
+    all_conditions = {}
+    for k in all_condition_keys:
+        vals = set()
+        for r in runs:
+            vals.add(r["summary"].get("conditions", {}).get(k, "false" if k == "label_swap" else ""))
+        all_conditions[k] = vals
 
     varying = {k: sorted(v) for k, v in all_conditions.items() if len(v) > 1}
     if not varying:
-        return {"varying_conditions": {}, "note": "No varying conditions across runs."}
+        return {"varying_conditions": {}, "anova": None, "note": "No varying conditions across runs."}
 
-    summaries = []
-    for r in runs:
+    observations = []
+    for r, rd in zip(runs, run_dirs):
         conds = r["summary"].get("conditions", {})
-        for pair in r["summary"].get("pairs", []):
-            summaries.append({
+        debates = {}
+        for f in sorted((rd / "debates").glob("*.json")):
+            d = json.loads(f.read_text(encoding="utf-8"))
+            debates[d["id"]] = d
+        for f in sorted((rd / "judgements").glob("*.json")):
+            j = json.loads(f.read_text(encoding="utf-8"))
+            parsed = j.get("parsed") or {}
+            pro_score = parsed.get("pro_score")
+            con_score = parsed.get("con_score")
+            if pro_score is None or con_score is None:
+                continue
+            debate = debates.get(j["debate_id"])
+            if not debate:
+                continue
+            pro_id = debate["pro_model"]["id"]
+            con_id = debate["con_model"]["id"]
+            if pro_id == con_id:
+                continue
+            obs = {
+                "margin": pro_score - con_score,
+                "pro_model": pro_id,
                 "run": r["run_name"],
-                "conditions": conds,
-                "pro_judges": pair["pro_judges"],
-                "con_judges": pair["con_judges"],
+            }
+            for k in all_condition_keys:
+                obs[k] = conds.get(k, "false" if k == "label_swap" else "")
+            obs.update(conds)
+            observations.append(obs)
+
+    if len(observations) < 4:
+        return {"varying_conditions": {k: list(v) for k, v in varying.items()}, "anova": None}
+
+    margins = np.array([o["margin"] for o in observations])
+    grand_mean = float(margins.mean())
+    ss_total = float(np.sum((margins - grand_mean) ** 2))
+
+    anova_rows = []
+    for factor_name, levels in varying.items():
+        ss = 0.0
+        for level in levels:
+            group = [o["margin"] for o in observations if o.get(factor_name) == level]
+            if group:
+                group_mean = np.mean(group)
+                ss += len(group) * (group_mean - grand_mean) ** 2
+        df = len(levels) - 1
+        if df > 0 and ss_total > 0:
+            anova_rows.append({
+                "source": factor_name,
+                "ss": round(float(ss), 1),
+                "df": df,
+                "pct_variance": round(100 * float(ss) / ss_total, 1),
+                "_ss": float(ss),
             })
+
+    ss_explained = sum(r["_ss"] for r in anova_rows)
+    ss_residual = max(ss_total - ss_explained, 0.001)
+    df_residual = max(len(observations) - sum(r["df"] for r in anova_rows) - 1, 1)
+    ms_residual = ss_residual / df_residual
+
+    for row in anova_rows:
+        ms = row["_ss"] / row["df"]
+        f_val = ms / ms_residual
+        p_val = float(f_dist.sf(f_val, row["df"], df_residual))
+        row["ms"] = round(ms, 1)
+        row["f"] = round(f_val, 2)
+        row["p_value"] = p_val
+        row["significant"] = bool(p_val < 0.05)
+        del row["_ss"]
+
+    anova_rows.append({
+        "source": "Residual",
+        "ss": round(ss_residual, 1),
+        "df": df_residual,
+        "ms": round(ms_residual, 1),
+        "f": None,
+        "p_value": None,
+        "pct_variance": round(100 * ss_residual / ss_total, 1) if ss_total > 0 else 0,
+        "significant": None,
+    })
 
     return {
         "varying_conditions": {k: list(v) for k, v in varying.items()},
         "run_count": len(runs),
         "run_names": [r["run_name"] for r in runs],
+        "anova": {
+            "response": "Score margin (pro_score - con_score) across all runs",
+            "n_observations": len(observations),
+            "rows": anova_rows,
+        },
     }
 
 
@@ -524,7 +608,7 @@ def serve(
 
     runs = [_load_run_data(rd) for rd in run_dirs]
     active_run = runs[0]
-    cross_run = _compute_cross_run_analysis(runs)
+    cross_run = _compute_cross_run_analysis(runs, run_dirs)
     all_debates_dirs = {rd.name: rd / "debates" for rd in run_dirs}
     all_judgements_dirs = {rd.name: rd / "judgements" for rd in run_dirs}
 

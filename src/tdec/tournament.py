@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -277,7 +278,9 @@ def run_relabel(
     )
 
     all_judgements = load_all_judgements(run_dir)
-    conditions = {"label_swap": "true", "source_run": source_name}
+    source_summary = json.loads((source_dir / "summary.json").read_text(encoding="utf-8"))
+    conditions = dict(source_summary.get("conditions", {}))
+    conditions["label_swap"] = "true"
     summary = summarize(run_dir, swapped_debates, all_judgements, errors, conditions)
     write_summary(run_dir, summary)
     return summary
