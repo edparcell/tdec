@@ -482,8 +482,11 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
             con_id = debate["con_model"]["id"]
             if pro_id == con_id:
                 continue
+            margin = pro_score - con_score
+            if conds.get("motion_polarity") == "negative":
+                margin = -margin
             obs = {
-                "margin": pro_score - con_score,
+                "margin": margin,
                 "pro_model": pro_id,
                 "run": r["run_name"],
             }
@@ -555,27 +558,31 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
     for factor_name, levels in varying.items():
         rows_bd = []
         for level in levels:
-            level_judgements = []
+            pro = 0
+            con = 0
+            per_judge: dict[str, dict[str, int]] = {jid: {"pro": 0, "con": 0} for jid in judge_ids}
             for r, rd in zip(runs, run_dirs):
                 conds = r["summary"].get("conditions", {})
                 cond_val = conds.get(factor_name, "false" if factor_name == "label_swap" else "")
                 if cond_val != level:
                     continue
+                is_negative = conds.get("motion_polarity") == "negative"
                 for f in (rd / "judgements").glob("*.json"):
                     j = json.loads(f.read_text(encoding="utf-8"))
                     winner = (j.get("parsed") or {}).get("winner")
-                    if winner in ("pro", "con"):
-                        level_judgements.append(j)
+                    if winner not in ("pro", "con"):
+                        continue
+                    if is_negative:
+                        winner = "con" if winner == "pro" else "pro"
+                    if winner == "pro":
+                        pro += 1
+                    else:
+                        con += 1
+                    jid = j["judge_model_id"]
+                    if jid in per_judge:
+                        per_judge[jid]["pro" if winner == "pro" else "con"] += 1
 
-            pro = sum(1 for j in level_judgements if j["parsed"]["winner"] == "pro")
-            con = sum(1 for j in level_judgements if j["parsed"]["winner"] == "con")
             total = pro + con
-            per_judge = {}
-            for jid in judge_ids:
-                jj = [j for j in level_judgements if j["judge_model_id"] == jid]
-                jp = sum(1 for j in jj if j["parsed"]["winner"] == "pro")
-                jc = sum(1 for j in jj if j["parsed"]["winner"] == "con")
-                per_judge[jid] = {"pro": jp, "con": jc}
             rows_bd.append({
                 "level": level,
                 "pro": pro,
