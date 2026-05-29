@@ -18,6 +18,7 @@ from tdec.artifacts import (
     load_all_judgements,
     load_debate_transcripts,
     make_run_dir,
+    unique_run_dir,
     write_debate,
     write_error,
     write_judgement,
@@ -217,7 +218,7 @@ def run_relabel(
     debates = load_debate_transcripts(source_dir)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     source_name = source_dir.name
-    run_dir = output_dir / f"{timestamp}__relabel__{source_name}"
+    run_dir = unique_run_dir(output_dir, f"{timestamp}__relabel__{source_name}")
     (run_dir / "debates").mkdir(parents=True)
     (run_dir / "judgements").mkdir(parents=True)
     (run_dir / "errors").mkdir(parents=True)
@@ -313,20 +314,37 @@ def _run_debate_batch(
 
         failed: list[DebateJob] = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(
+            futures = {}
+            for job in pending:
+                try:
+                    pro_model = _debater_by_id(config.debaters, job.pro_model_id)
+                    con_model = _debater_by_id(config.debaters, job.con_model_id)
+                except Exception as e:
+                    error = _tournament_error(
+                        stage="debate",
+                        topic_id=job.topic_id,
+                        debate_id=job.debate_id,
+                        pro_model_id=job.pro_model_id,
+                        con_model_id=job.con_model_id,
+                        judge_model_id=None,
+                        exc=e,
+                        model_id=job.pro_model_id,
+                    )
+                    errors.append(error)
+                    write_error(run_dir, error, len(errors))
+                    continue
+                future = executor.submit(
                     debate_fn,
                     client=client,
                     topic=config.topics[job.topic_index],
-                    pro_model=_debater_by_id(config.debaters, job.pro_model_id),
-                    con_model=_debater_by_id(config.debaters, job.con_model_id),
+                    pro_model=pro_model,
+                    con_model=con_model,
                     rounds=config.run.rounds,
                     prompt_set=prompt_set,
                     opening_cache=opening_cache,
                     **extra,
-                ): job
-                for job in pending
-            }
+                )
+                futures[future] = job
             for future in as_completed(futures):
                 job = futures[future]
                 try:
@@ -346,6 +364,20 @@ def _run_debate_batch(
                         )
                         errors.append(error)
                         write_error(run_dir, error, len(errors))
+                    continue
+                except Exception as e:
+                    error = _tournament_error(
+                        stage="debate",
+                        topic_id=job.topic_id,
+                        debate_id=job.debate_id,
+                        pro_model_id=job.pro_model_id,
+                        con_model_id=job.con_model_id,
+                        judge_model_id=None,
+                        exc=e,
+                        model_id=job.pro_model_id,
+                    )
+                    errors.append(error)
+                    write_error(run_dir, error, len(errors))
                     continue
                 results.append((job.index, transcript))
                 write_debate(run_dir, transcript, artifact_verbosity=artifact_verbosity)
@@ -378,17 +410,32 @@ def _run_judgement_batch(
 
         failed: list[tuple[JudgementJob, DebateTranscript]] = []
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {
-                executor.submit(
+            futures = {}
+            for job, transcript in pending:
+                judge_model = judge_lookup.get(job.judge_model_id)
+                if judge_model is None:
+                    error = _tournament_error(
+                        stage="judgement",
+                        topic_id=job.topic_id,
+                        debate_id=job.debate_id,
+                        pro_model_id=job.pro_model_id,
+                        con_model_id=job.con_model_id,
+                        judge_model_id=job.judge_model_id,
+                        exc=ValueError(f"Unknown judge model id: {job.judge_model_id!r}"),
+                        model_id=job.judge_model_id,
+                    )
+                    errors.append(error)
+                    write_error(run_dir, error, len(errors))
+                    continue
+                future = executor.submit(
                     judge_debate,
                     client=client,
                     transcript=transcript,
-                    judge_model=judge_lookup[job.judge_model_id],
+                    judge_model=judge_model,
                     judging_config=judging_config,
                     prompt_set=prompt_set,
-                ): (job, transcript)
-                for job, transcript in pending
-            }
+                )
+                futures[future] = (job, transcript)
             for future in as_completed(futures):
                 job, transcript = futures[future]
                 try:
@@ -408,6 +455,20 @@ def _run_judgement_batch(
                         )
                         errors.append(error)
                         write_error(run_dir, error, len(errors))
+                    continue
+                except Exception as e:
+                    error = _tournament_error(
+                        stage="judgement",
+                        topic_id=job.topic_id,
+                        debate_id=job.debate_id,
+                        pro_model_id=job.pro_model_id,
+                        con_model_id=job.con_model_id,
+                        judge_model_id=job.judge_model_id,
+                        exc=e,
+                        model_id=job.judge_model_id,
+                    )
+                    errors.append(error)
+                    write_error(run_dir, error, len(errors))
                     continue
                 results.append((job.index, judgement))
                 write_judgement(run_dir, judgement, artifact_verbosity=artifact_verbosity)
@@ -458,11 +519,17 @@ def _judgement_jobs(
 
 
 def _debater_by_id(models: list[DebaterConfig], model_id: str) -> DebaterConfig:
-    return next(model for model in models if model.id == model_id)
+    for model in models:
+        if model.id == model_id:
+            return model
+    raise ValueError(f"Unknown debater model id: {model_id!r}")
 
 
 def _judge_by_id(models: list[JudgeModelConfig], model_id: str) -> JudgeModelConfig:
-    return next(model for model in models if model.id == model_id)
+    for model in models:
+        if model.id == model_id:
+            return model
+    raise ValueError(f"Unknown judge model id: {model_id!r}")
 
 
 def summarize(
@@ -496,23 +563,20 @@ def summarize(
     pair_summaries = _pair_summaries(debate_summaries)
     pair_matrices = _pair_matrices(pair_summaries)
     motion_summaries = _motion_summaries(debate_summaries)
+    # Run-level totals count actual billed calls: cached openings reused across
+    # debates are counted once (reused=True turns excluded), and every judge
+    # attempt is counted (not just the final parse). Per-debate figures above
+    # remain notional, so their sum can exceed these totals by the reuse saving.
+    actual_metrics = _actual_call_metrics(debates, judgements)
     return {
         "run_dir": str(run_dir),
         "conditions": conditions or {},
-        "total_cost_usd": _sum_optional_costs(
-            debate["debate_cost_usd"] for debate in debate_summaries
-        )
-        + _sum_optional_costs(debate["judging_cost_usd"] for debate in debate_summaries)
-        if _all_costs_known(debate_summaries)
-        else None,
+        "total_cost_usd": _sum_cost(actual_metrics),
         "cost_errors": [
             error for debate in debate_summaries for error in debate["cost_errors"]
         ],
         "errors": [error.to_dict() for error in errors],
-        "total_latency_seconds": sum(
-            debate["debate_latency_seconds"] + debate["judging_latency_seconds"]
-            for debate in debate_summaries
-        ),
+        "total_latency_seconds": sum(m.latency_seconds for m in actual_metrics),
         "models": model_summaries,
         "pairs": pair_summaries,
         "pair_matrices": pair_matrices,
@@ -529,8 +593,18 @@ def _tournament_error(
     pro_model_id: str,
     con_model_id: str,
     judge_model_id: str | None,
-    exc: ModelCallError,
+    exc: Exception,
+    model_id: str | None = None,
 ) -> TournamentError:
+    # ModelCallError wraps the provider exception in .cause and knows the model
+    # id; any other exception (e.g. a config mismatch) is recorded directly so a
+    # single bad job is logged rather than crashing the whole batch.
+    if isinstance(exc, ModelCallError):
+        cause: BaseException = exc.cause
+        resolved_model_id = exc.model_id
+    else:
+        cause = exc
+        resolved_model_id = model_id or ""
     return TournamentError(
         stage=stage,
         topic_id=topic_id,
@@ -538,10 +612,10 @@ def _tournament_error(
         pro_model_id=pro_model_id,
         con_model_id=con_model_id,
         judge_model_id=judge_model_id,
-        model_id=exc.model_id,
-        error_type=type(exc.cause).__name__,
-        error_message=_redact_error_text(str(exc.cause)),
-        traceback=_redact_error_text("".join(traceback.format_exception(exc.cause))),
+        model_id=resolved_model_id,
+        error_type=type(cause).__name__,
+        error_message=_redact_error_text(str(cause)),
+        traceback=_redact_error_text("".join(traceback.format_exception(cause))),
     )
 
 
@@ -572,8 +646,8 @@ def _model_summaries(debates: list[DebateTranscript], judgements: list[Judgement
             if turn.metrics is not None:
                 _add_metric(totals, turn.speaker_model_id, "debater", turn.metrics)
     for judgement in judgements:
-        if judgement.metrics is not None:
-            _add_metric(totals, judgement.judge_model_id, "judge", judgement.metrics)
+        for metric in _judgement_call_metrics(judgement):
+            _add_metric(totals, judgement.judge_model_id, "judge", metric)
 
     elos = _elo_ratings(debates, judgements)
     rows = []
@@ -693,24 +767,35 @@ def _motion_summaries(debate_summaries: list[dict]) -> list[dict]:
 
 
 def _elo_ratings(debates: list[DebateTranscript], judgements: list[Judgement]) -> dict[str, float]:
-    ratings: dict[str, float] = {}
-    debate_by_id = {debate.id: debate for debate in debates}
+    # One Elo game per debate: aggregate the judges' votes into a single pro
+    # score (fraction of decided votes for pro). Treating each judge vote as a
+    # separate game inflates rating swings and makes the result depend on the
+    # order judgements are loaded. Debates are processed in deterministic id
+    # order so ratings are reproducible.
+    votes_by_debate: dict[str, list[float]] = {}
     for judgement in judgements:
         winner = judgement.parsed.get("winner")
         if winner in {"parse_error", None}:
             continue
-        debate = debate_by_id[judgement.debate_id]
+        votes_by_debate.setdefault(judgement.debate_id, []).append(
+            _pro_score_for_winner(winner)
+        )
+
+    ratings: dict[str, float] = {}
+    for debate in sorted(debates, key=lambda d: d.id):
+        scores = votes_by_debate.get(debate.id)
+        if not scores:
+            continue
         pro_id = debate.pro_model.id
         con_id = debate.con_model.id
         if pro_id == con_id:
             continue
         ratings.setdefault(pro_id, STARTING_ELO)
         ratings.setdefault(con_id, STARTING_ELO)
-        score_pro = _pro_score_for_winner(winner)
+        score_pro = sum(scores) / len(scores)
         expected_pro = _expected_score(ratings[pro_id], ratings[con_id])
-        expected_con = 1 - expected_pro
         ratings[pro_id] += ELO_K * (score_pro - expected_pro)
-        ratings[con_id] += ELO_K * ((1 - score_pro) - expected_con)
+        ratings[con_id] += ELO_K * ((1 - score_pro) - (1 - expected_pro))
     return {model_id: round(rating, 1) for model_id, rating in ratings.items()}
 
 
@@ -726,12 +811,37 @@ def _expected_score(rating_a: float, rating_b: float) -> float:
     return 1 / (1 + 10 ** ((rating_b - rating_a) / 400))
 
 
+def _judgement_call_metrics(judgement: Judgement) -> list:
+    """Every billed call behind a judgement: all attempts, not just the final parse."""
+    if judgement.attempts:
+        return [a.metrics for a in judgement.attempts if a.metrics is not None]
+    return [judgement.metrics] if judgement.metrics is not None else []
+
+
+def _actual_call_metrics(
+    debates: list[DebateTranscript], judgements: list[Judgement]
+) -> list:
+    """Metrics for actual API spend: non-reused debate turns + every judge attempt."""
+    metrics = []
+    for debate in debates:
+        for turn in debate.turns:
+            if turn.metrics is not None and not turn.metrics.reused:
+                metrics.append(turn.metrics)
+    for judgement in judgements:
+        metrics.extend(_judgement_call_metrics(judgement))
+    return metrics
+
+
 def _sum_debate_latency(debate: DebateTranscript) -> float:
     return sum(turn.metrics.latency_seconds for turn in debate.turns if turn.metrics is not None)
 
 
 def _sum_judgement_latency(judgements: list[Judgement]) -> float:
-    return sum(j.metrics.latency_seconds for j in judgements if j.metrics is not None)
+    return sum(
+        metric.latency_seconds
+        for judgement in judgements
+        for metric in _judgement_call_metrics(judgement)
+    )
 
 
 def _sum_debate_cost(debate: DebateTranscript) -> float | None:
@@ -739,7 +849,9 @@ def _sum_debate_cost(debate: DebateTranscript) -> float | None:
 
 
 def _sum_judgement_cost(judgements: list[Judgement]) -> float | None:
-    return _sum_cost(j.metrics for j in judgements)
+    return _sum_cost(
+        metric for judgement in judgements for metric in _judgement_call_metrics(judgement)
+    )
 
 
 def _sum_cost(metrics) -> float | None:
@@ -749,23 +861,13 @@ def _sum_cost(metrics) -> float | None:
     return sum(values)
 
 
-def _all_costs_known(debate_summaries: list[dict]) -> bool:
-    return all(
-        debate["debate_cost_usd"] is not None and debate["judging_cost_usd"] is not None
-        for debate in debate_summaries
-    )
-
-
-def _sum_optional_costs(values) -> float:
-    return sum(value for value in values if value is not None)
-
-
 def _cost_errors(debate: DebateTranscript, judgements: list[Judgement]) -> list[str]:
     errors = []
     for turn in debate.turns:
         if turn.metrics is not None and turn.metrics.cost_error is not None:
             errors.append(f"{turn.speaker_model_id}: {turn.metrics.cost_error}")
     for judgement in judgements:
-        if judgement.metrics is not None and judgement.metrics.cost_error is not None:
-            errors.append(f"{judgement.judge_model_id}: {judgement.metrics.cost_error}")
+        for metric in _judgement_call_metrics(judgement):
+            if metric.cost_error is not None:
+                errors.append(f"{judgement.judge_model_id}: {metric.cost_error}")
     return errors

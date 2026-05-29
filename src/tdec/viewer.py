@@ -22,26 +22,25 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _load_all_debates(run_dir: Path) -> dict:
-    result = {}
+def _load_run_artifacts(run_dir: Path) -> tuple[dict, list]:
+    """Load every debate and judgement JSON once.
+
+    Returns (debates_by_id, judgements). Callers pass these into the compute
+    helpers instead of each helper re-globbing and re-parsing the same files.
+    """
+    debates: dict = {}
     for f in sorted((run_dir / "debates").glob("*.json")):
         data = json.loads(f.read_text(encoding="utf-8"))
-        result[data["id"]] = data
-    return result
-
-
-def _load_all_judgements(run_dir: Path) -> dict:
-    result: dict[str, list] = {}
+        debates[data["id"]] = data
+    judgements: list = []
     for f in sorted((run_dir / "judgements").glob("*.json")):
-        data = json.loads(f.read_text(encoding="utf-8"))
-        result.setdefault(data["debate_id"], []).append(data)
-    return result
+        judgements.append(json.loads(f.read_text(encoding="utf-8")))
+    return debates, judgements
 
 
-def _extract_topic_motions(run_dir: Path) -> dict:
+def _extract_topic_motions(debates: dict) -> dict:
     result = {}
-    for f in (run_dir / "debates").glob("*.json"):
-        data = json.loads(f.read_text(encoding="utf-8"))
+    for data in debates.values():
         topic = data.get("topic", {})
         tid = topic.get("id")
         if tid and tid not in result:
@@ -52,16 +51,7 @@ def _extract_topic_motions(run_dir: Path) -> dict:
     return result
 
 
-def _compute_judge_stats(run_dir: Path) -> dict:
-    judgements = []
-    for f in sorted((run_dir / "judgements").glob("*.json")):
-        judgements.append(json.loads(f.read_text(encoding="utf-8")))
-
-    debates = {}
-    for f in sorted((run_dir / "debates").glob("*.json")):
-        d = json.loads(f.read_text(encoding="utf-8"))
-        debates[d["id"]] = d
-
+def _compute_judge_stats(judgements: list, debates: dict) -> dict:
     judge_ids = sorted({j["judge_model_id"] for j in judgements})
     debater_ids = sorted({d["pro_model"]["id"] for d in debates.values()}
                          | {d["con_model"]["id"] for d in debates.values()})
@@ -123,16 +113,7 @@ def _compute_judge_stats(run_dir: Path) -> dict:
     }
 
 
-def _compute_motion_stats(run_dir: Path) -> list[dict]:
-    judgements = []
-    for f in sorted((run_dir / "judgements").glob("*.json")):
-        judgements.append(json.loads(f.read_text(encoding="utf-8")))
-
-    debates = {}
-    for f in sorted((run_dir / "debates").glob("*.json")):
-        d = json.loads(f.read_text(encoding="utf-8"))
-        debates[d["id"]] = d
-
+def _compute_motion_stats(judgements: list, debates: dict) -> list[dict]:
     topic_ids = []
     for d in debates.values():
         tid = d["topic"]["id"]
@@ -179,20 +160,103 @@ def _compute_motion_stats(run_dir: Path) -> list[dict]:
     return {"judge_ids": judge_ids, "motions": rows}
 
 
-def _compute_analysis_stats(run_dir: Path) -> dict:
+def _ols_residual_ss(y, factor_columns: list) -> tuple[float, int]:
+    """Residual sum of squares and design rank for an additive least-squares fit.
+
+    The design is an intercept plus one-hot dummies (first level dropped as the
+    reference) for each categorical factor column. Returns (residual_ss, rank).
+    Using the design rank lets degrees of freedom and partial sums of squares
+    stay correct even for unbalanced or partly confounded factors.
+    """
+    import numpy as np
+
+    arr = np.asarray(y, dtype=float)
+    n = len(arr)
+    columns = [np.ones(n)]
+    for values in factor_columns:
+        for level in sorted(set(values))[1:]:
+            columns.append(np.fromiter((1.0 if v == level else 0.0 for v in values), float, n))
+    design = np.column_stack(columns)
+    beta, _, rank, _ = np.linalg.lstsq(design, arr, rcond=None)
+    residual = arr - design @ beta
+    return float(residual @ residual), int(rank)
+
+
+def _anova_table(margins: list, factors: dict) -> tuple[list, str | None]:
+    """Type-III ANOVA via OLS: each factor's partial sum of squares is the rise
+    in residual SS when that factor is dropped from the full additive model.
+
+    Unlike a marginal-means decomposition, the parts do not double-count shared
+    variance, so percentages don't exceed 100% and a factor confounded with
+    another contributes ~0 identifiable variance. Significance is only reported
+    when there are residual degrees of freedom to estimate error from — there is
+    no minimum-residual floor that would manufacture significance.
+    """
+    import numpy as np
+    from scipy.stats import f as f_dist
+
+    arr = np.asarray(margins, dtype=float)
+    n = len(arr)
+    grand_mean = float(arr.mean())
+    ss_total = float(np.sum((arr - grand_mean) ** 2))
+
+    names = list(factors.keys())
+    full_ss, full_rank = _ols_residual_ss(arr, [factors[name] for name in names])
+    df_residual = n - full_rank
+    testable = df_residual >= 1 and full_ss > 1e-9 and ss_total > 0
+    ms_residual = full_ss / df_residual if df_residual >= 1 else None
+
+    rows = []
+    for name in names:
+        reduced_ss, reduced_rank = _ols_residual_ss(
+            arr, [factors[other] for other in names if other != name]
+        )
+        ss_factor = max(reduced_ss - full_ss, 0.0)
+        df_factor = full_rank - reduced_rank
+        row = {
+            "source": name,
+            "ss": round(ss_factor, 1),
+            "df": df_factor,
+            "pct_variance": round(100 * ss_factor / ss_total, 1) if ss_total > 0 else 0,
+        }
+        if testable and df_factor >= 1:
+            ms = ss_factor / df_factor
+            f_val = ms / ms_residual
+            p_val = float(f_dist.sf(f_val, df_factor, df_residual))
+            row.update(
+                {"ms": round(ms, 1), "f": round(f_val, 2), "p_value": p_val,
+                 "significant": bool(p_val < 0.05)}
+            )
+        else:
+            row.update({"ms": None, "f": None, "p_value": None, "significant": None})
+        rows.append(row)
+
+    rows.append({
+        "source": "Residual",
+        "ss": round(full_ss, 1),
+        "df": df_residual,
+        "ms": round(ms_residual, 1) if ms_residual is not None else None,
+        "f": None,
+        "p_value": None,
+        "pct_variance": round(100 * full_ss / ss_total, 1) if ss_total > 0 else 0,
+        "significant": None,
+    })
+
+    note = None
+    if not testable:
+        note = (
+            "Too few residual degrees of freedom to test significance "
+            "(the factors fit the data almost exactly, or there are too few "
+            "observations); F and p are omitted."
+        )
+    return rows, note
+
+
+def _compute_analysis_stats(judgements: list, debates: dict) -> dict:
     import math
 
     import numpy as np
     from scipy.stats import binomtest
-
-    judgements = []
-    for f in sorted((run_dir / "judgements").glob("*.json")):
-        judgements.append(json.loads(f.read_text(encoding="utf-8")))
-
-    debates = {}
-    for f in sorted((run_dir / "debates").glob("*.json")):
-        d = json.loads(f.read_text(encoding="utf-8"))
-        debates[d["id"]] = d
 
     # ── Section 1: Side bias ──
     pro_wins = sum(1 for j in judgements if (j.get("parsed") or {}).get("winner") == "pro")
@@ -319,115 +383,32 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
     }
 
     # ── Section 5: ANOVA (model x topic) ──
-    from scipy.stats import f as f_dist
+    margins: list[float] = []
+    obs_models: list[str] = []
+    obs_topics: list[str] = []
+    for j in judgements:
+        debate = debates.get(j["debate_id"])
+        if not debate:
+            continue
+        parsed = j.get("parsed") or {}
+        pro_score = parsed.get("pro_score")
+        con_score = parsed.get("con_score")
+        if pro_score is None or con_score is None:
+            continue
+        pro_id = debate["pro_model"]["id"]
+        con_id = debate["con_model"]["id"]
+        if pro_id == con_id:
+            continue
+        margins.append(pro_score - con_score)
+        obs_models.append(pro_id)
+        obs_topics.append(debate["topic"]["id"])
 
     anova = None
-    topic_ids = sorted({d["topic"]["id"] for d in debates.values()})
-    if len(topic_ids) > 1 and len(debater_ids) > 1:
-        scores_by_cell: dict[tuple[str, str], list[float]] = {}
-        for j in judgements:
-            debate = debates.get(j["debate_id"])
-            if not debate:
-                continue
-            parsed = j.get("parsed") or {}
-            pro_score = parsed.get("pro_score")
-            con_score = parsed.get("con_score")
-            if pro_score is None or con_score is None:
-                continue
-            pro_id = debate["pro_model"]["id"]
-            con_id = debate["con_model"]["id"]
-            if pro_id == con_id:
-                continue
-            tid = debate["topic"]["id"]
-            margin = pro_score - con_score
-            scores_by_cell.setdefault((pro_id, tid), []).append(margin)
-
-        all_margins = []
-        for vals in scores_by_cell.values():
-            all_margins.extend(vals)
-
-        if len(all_margins) >= 4:
-            grand_mean = float(np.mean(all_margins))
-            n_obs = len(all_margins)
-
-            model_means = {}
-            for mid in debater_ids:
-                vals = [v for (m, t), vs in scores_by_cell.items() if m == mid for v in vs]
-                if vals:
-                    model_means[mid] = float(np.mean(vals))
-
-            topic_means = {}
-            for tid in topic_ids:
-                vals = [v for (m, t), vs in scores_by_cell.items() if t == tid for v in vs]
-                if vals:
-                    topic_means[tid] = float(np.mean(vals))
-
-            ss_model = sum(
-                len([v for (m, t), vs in scores_by_cell.items() if m == mid for v in vs])
-                * (model_means.get(mid, grand_mean) - grand_mean) ** 2
-                for mid in debater_ids if mid in model_means
-            )
-            ss_topic = sum(
-                len([v for (m, t), vs in scores_by_cell.items() if t == tid for v in vs])
-                * (topic_means.get(tid, grand_mean) - grand_mean) ** 2
-                for tid in topic_ids if tid in topic_means
-            )
-
-            ss_total = float(np.sum((np.array(all_margins) - grand_mean) ** 2))
-            ss_residual = max(ss_total - ss_model - ss_topic, 0.001)
-
-            df_model = max(len(model_means) - 1, 1)
-            df_topic = max(len(topic_means) - 1, 1)
-            df_residual = max(n_obs - df_model - df_topic - 1, 1)
-
-            ms_model = ss_model / df_model
-            ms_topic = ss_topic / df_topic
-            ms_residual = ss_residual / df_residual
-
-            f_model = ms_model / ms_residual
-            f_topic = ms_topic / ms_residual
-            p_model = float(f_dist.sf(f_model, df_model, df_residual))
-            p_topic = float(f_dist.sf(f_topic, df_topic, df_residual))
-
-            pct_model = round(100 * ss_model / ss_total, 1) if ss_total > 0 else 0
-            pct_topic = round(100 * ss_topic / ss_total, 1) if ss_total > 0 else 0
-            pct_residual = round(100 * ss_residual / ss_total, 1) if ss_total > 0 else 0
-
-            anova = {
-                "response": "Score margin (pro_score - con_score)",
-                "rows": [
-                    {
-                        "source": "Model (pro)",
-                        "ss": round(ss_model, 1),
-                        "df": df_model,
-                        "ms": round(ms_model, 1),
-                        "f": round(f_model, 2),
-                        "p_value": p_model,
-                        "pct_variance": pct_model,
-                        "significant": bool(p_model < 0.05),
-                    },
-                    {
-                        "source": "Topic",
-                        "ss": round(ss_topic, 1),
-                        "df": df_topic,
-                        "ms": round(ms_topic, 1),
-                        "f": round(f_topic, 2),
-                        "p_value": p_topic,
-                        "pct_variance": pct_topic,
-                        "significant": bool(p_topic < 0.05),
-                    },
-                    {
-                        "source": "Residual",
-                        "ss": round(ss_residual, 1),
-                        "df": df_residual,
-                        "ms": round(ms_residual, 1),
-                        "f": None,
-                        "p_value": None,
-                        "pct_variance": pct_residual,
-                        "significant": None,
-                    },
-                ],
-            }
+    if len(margins) >= 4 and len(set(obs_topics)) > 1 and len(set(obs_models)) > 1:
+        rows, note = _anova_table(margins, {"Model (pro)": obs_models, "Topic": obs_topics})
+        anova = {"response": "Score margin (pro_score - con_score)", "rows": rows}
+        if note:
+            anova["note"] = note
 
     return {
         "side_bias": side_bias,
@@ -439,10 +420,11 @@ def _compute_analysis_stats(run_dir: Path) -> dict:
     }
 
 
-def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict | None:
-    import numpy as np
-    from scipy.stats import f as f_dist
+def _cross_run_condition(conds: dict, key: str) -> str:
+    return conds.get(key, "false" if key == "label_swap" else "")
 
+
+def _compute_cross_run_analysis(runs: list[dict]) -> dict | None:
     if len(runs) < 2:
         return None
 
@@ -452,24 +434,19 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
 
     all_conditions = {}
     for k in all_condition_keys:
-        vals = set()
-        for r in runs:
-            vals.add(r["summary"].get("conditions", {}).get(k, "false" if k == "label_swap" else ""))
-        all_conditions[k] = vals
+        all_conditions[k] = {
+            _cross_run_condition(r["summary"].get("conditions", {}), k) for r in runs
+        }
 
     varying = {k: sorted(v) for k, v in all_conditions.items() if len(v) > 1}
     if not varying:
         return {"varying_conditions": {}, "anova": None, "note": "No varying conditions across runs."}
 
     observations = []
-    for r, rd in zip(runs, run_dirs):
+    for r in runs:
         conds = r["summary"].get("conditions", {})
-        debates = {}
-        for f in sorted((rd / "debates").glob("*.json")):
-            d = json.loads(f.read_text(encoding="utf-8"))
-            debates[d["id"]] = d
-        for f in sorted((rd / "judgements").glob("*.json")):
-            j = json.loads(f.read_text(encoding="utf-8"))
+        debates = r["debates"]
+        for j in r["judgements"]:
             parsed = j.get("parsed") or {}
             pro_score = parsed.get("pro_score")
             con_score = parsed.get("con_score")
@@ -485,72 +462,28 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
             margin = pro_score - con_score
             if conds.get("motion_polarity") == "negative":
                 margin = -margin
-            obs = {
-                "margin": margin,
-                "pro_model": pro_id,
-                "run": r["run_name"],
-            }
+            obs = {"margin": margin, "pro_model": pro_id, "run": r["run_name"]}
             for k in all_condition_keys:
-                obs[k] = conds.get(k, "false" if k == "label_swap" else "")
-            obs.update(conds)
+                obs[k] = _cross_run_condition(conds, k)
             observations.append(obs)
 
     if len(observations) < 4:
         return {"varying_conditions": {k: list(v) for k, v in varying.items()}, "anova": None}
 
-    margins = np.array([o["margin"] for o in observations])
-    grand_mean = float(margins.mean())
-    ss_total = float(np.sum((margins - grand_mean) ** 2))
+    factor_cols = {name: [o[name] for o in observations] for name in varying}
+    rows, table_note = _anova_table([o["margin"] for o in observations], factor_cols)
 
-    anova_rows = []
-    for factor_name, levels in varying.items():
-        ss = 0.0
-        for level in levels:
-            group = [o["margin"] for o in observations if o.get(factor_name) == level]
-            if group:
-                group_mean = np.mean(group)
-                ss += len(group) * (group_mean - grand_mean) ** 2
-        df = len(levels) - 1
-        if df > 0 and ss_total > 0:
-            anova_rows.append({
-                "source": factor_name,
-                "ss": round(float(ss), 1),
-                "df": df,
-                "pct_variance": round(100 * float(ss) / ss_total, 1),
-                "_ss": float(ss),
-            })
-
-    ss_explained = sum(r["_ss"] for r in anova_rows)
-    ss_residual = max(ss_total - ss_explained, 0.001)
-    df_residual = max(len(observations) - sum(r["df"] for r in anova_rows) - 1, 1)
-    ms_residual = ss_residual / df_residual
-
-    for row in anova_rows:
-        ms = row["_ss"] / row["df"]
-        f_val = ms / ms_residual
-        p_val = float(f_dist.sf(f_val, row["df"], df_residual))
-        row["ms"] = round(ms, 1)
-        row["f"] = round(f_val, 2)
-        row["p_value"] = p_val
-        row["significant"] = bool(p_val < 0.05)
-        del row["_ss"]
-
-    anova_rows.append({
-        "source": "Residual",
-        "ss": round(ss_residual, 1),
-        "df": df_residual,
-        "ms": round(ms_residual, 1),
-        "f": None,
-        "p_value": None,
-        "pct_variance": round(100 * ss_residual / ss_total, 1) if ss_total > 0 else 0,
-        "significant": None,
-    })
+    caveat = (
+        "Each condition is constant within a run, so factor effects are "
+        "confounded with run identity and the many judge votes within a run are "
+        "not independent observations; treat p-values as optimistic."
+    )
+    note = caveat if table_note is None else f"{caveat} {table_note}"
 
     judge_ids = sorted({
-        j.get("judge_model_id", "")
-        for r, rd in zip(runs, run_dirs)
-        for f in (rd / "judgements").glob("*.json")
-        for j in [json.loads(f.read_text(encoding="utf-8"))]
+        j["judge_model_id"]
+        for r in runs
+        for j in r["judgements"]
         if j.get("judge_model_id")
     })
 
@@ -561,14 +494,12 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
             pro = 0
             con = 0
             per_judge: dict[str, dict[str, int]] = {jid: {"pro": 0, "con": 0} for jid in judge_ids}
-            for r, rd in zip(runs, run_dirs):
+            for r in runs:
                 conds = r["summary"].get("conditions", {})
-                cond_val = conds.get(factor_name, "false" if factor_name == "label_swap" else "")
-                if cond_val != level:
+                if _cross_run_condition(conds, factor_name) != level:
                     continue
                 is_negative = conds.get("motion_polarity") == "negative"
-                for f in (rd / "judgements").glob("*.json"):
-                    j = json.loads(f.read_text(encoding="utf-8"))
+                for j in r["judgements"]:
                     winner = (j.get("parsed") or {}).get("winner")
                     if winner not in ("pro", "con"):
                         continue
@@ -578,7 +509,7 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
                         pro += 1
                     else:
                         con += 1
-                    jid = j["judge_model_id"]
+                    jid = j.get("judge_model_id")
                     if jid in per_judge:
                         per_judge[jid]["pro" if winner == "pro" else "con"] += 1
 
@@ -602,20 +533,19 @@ def _compute_cross_run_analysis(runs: list[dict], run_dirs: list[Path]) -> dict 
         "anova": {
             "response": "Score margin (pro_score - con_score) across all runs",
             "n_observations": len(observations),
-            "rows": anova_rows,
+            "rows": rows,
+            "note": note,
         },
     }
 
 
-def _compute_word_counts(run_dir: Path) -> dict:
+def _compute_word_counts(debates: dict, judgements: list) -> dict:
     debate_words = 0
     judgement_words = 0
-    for f in (run_dir / "debates").glob("*.json"):
-        data = json.loads(f.read_text(encoding="utf-8"))
+    for data in debates.values():
         for turn in data.get("turns", []):
             debate_words += len(turn.get("content", "").split())
-    for f in (run_dir / "judgements").glob("*.json"):
-        data = json.loads(f.read_text(encoding="utf-8"))
+    for data in judgements:
         judgement_words += len(data.get("raw_text", "").split())
     return {"debate_words": debate_words, "judgement_words": judgement_words}
 
@@ -631,14 +561,17 @@ def _jinja_env() -> jinja2.Environment:
 
 
 def _load_run_data(run_dir: Path) -> dict:
+    debates, judgements = _load_run_artifacts(run_dir)
     return {
         "run_name": run_dir.name,
         "summary": json.loads((run_dir / "summary.json").read_text(encoding="utf-8")),
-        "topic_motions": _extract_topic_motions(run_dir),
-        "word_counts": _compute_word_counts(run_dir),
-        "judge_stats": _compute_judge_stats(run_dir),
-        "motion_stats": _compute_motion_stats(run_dir),
-        "analysis_stats": _compute_analysis_stats(run_dir),
+        "topic_motions": _extract_topic_motions(debates),
+        "word_counts": _compute_word_counts(debates, judgements),
+        "judge_stats": _compute_judge_stats(judgements, debates),
+        "motion_stats": _compute_motion_stats(judgements, debates),
+        "analysis_stats": _compute_analysis_stats(judgements, debates),
+        "debates": debates,
+        "judgements": judgements,
     }
 
 
@@ -660,7 +593,7 @@ def serve(
 
     runs = [_load_run_data(rd) for rd in run_dirs]
     active_run = runs[0]
-    cross_run = _compute_cross_run_analysis(runs, run_dirs)
+    cross_run = _compute_cross_run_analysis(runs)
     all_debates_dirs = {rd.name: rd / "debates" for rd in run_dirs}
     all_judgements_dirs = {rd.name: rd / "judgements" for rd in run_dirs}
 
@@ -741,17 +674,19 @@ def serve(
 
 def export_html(run_dir: Path, output: Path) -> None:
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-    debates = _load_all_debates(run_dir)
-    judgements = _load_all_judgements(run_dir)
+    debates, judgement_list = _load_run_artifacts(run_dir)
+    judgements: dict = {}
+    for j in judgement_list:
+        judgements.setdefault(j["debate_id"], []).append(j)
     css = _STATIC_DIR.joinpath("viewer.css").read_text(encoding="utf-8")
 
     env = _jinja_env()
     template = env.get_template("viewer.html")
-    topic_motions = _extract_topic_motions(run_dir)
-    word_counts = _compute_word_counts(run_dir)
-    judge_stats = _compute_judge_stats(run_dir)
-    motion_stats = _compute_motion_stats(run_dir)
-    analysis_stats = _compute_analysis_stats(run_dir)
+    topic_motions = _extract_topic_motions(debates)
+    word_counts = _compute_word_counts(debates, judgement_list)
+    judge_stats = _compute_judge_stats(judgement_list, debates)
+    motion_stats = _compute_motion_stats(judgement_list, debates)
+    analysis_stats = _compute_analysis_stats(judgement_list, debates)
     html = template.render(
         run_name=run_dir.name,
         summary=json.dumps(summary),

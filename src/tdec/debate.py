@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 from tdec.config import DebaterConfig, TopicConfig
 from tdec.debate_types import DebateTranscript, DebateTurn, ModelCallResult, Side
@@ -33,20 +34,21 @@ class OpeningCache:
         self,
         key: tuple[str, str, str],
         fn: callable,
-    ) -> ModelCallResult:
+    ) -> tuple[ModelCallResult, bool]:
+        """Return (result, was_cached). was_cached is True on a cache hit."""
         with self._global_lock:
             if key in self._cache:
-                return self._cache[key]
+                return self._cache[key], True
             if key not in self._key_locks:
                 self._key_locks[key] = threading.Lock()
             key_lock = self._key_locks[key]
 
         with key_lock:
             if key in self._cache:
-                return self._cache[key]
+                return self._cache[key], True
             result = fn()
             self._cache[key] = result
-            return result
+            return result, False
 
 
 def run_debate(
@@ -93,11 +95,12 @@ def run_debate(
 
             if is_opening and opening_cache is not None:
                 cache_key = (model.id, topic.id, side)
-                result = opening_cache.get_or_call(
+                result, was_cached = opening_cache.get_or_call(
                     cache_key, lambda: client.call(model, histories[side])
                 )
             else:
                 result = client.call(model, histories[side])
+                was_cached = False
 
             histories[side].append(_plain_msg("assistant", result.content))
 
@@ -107,7 +110,7 @@ def run_debate(
                 side=side,
                 turn_number=round_number,
                 content=result.content,
-                metrics=result.metrics,
+                metrics=replace(result.metrics, reused=True) if was_cached else result.metrics,
             )
             turns.append(turn)
             _share_turn(histories, turn)
@@ -159,25 +162,25 @@ def run_parallel_debate(
                 )
             histories[side].append(_plain_msg("user", prompt))
 
-        def _call_side(side: Side, model: DebaterConfig) -> ModelCallResult:
+        def _call_side(side: Side, model: DebaterConfig) -> tuple[ModelCallResult, bool]:
             if round_number == 1 and opening_cache is not None:
                 cache_key = (model.id, topic.id, side)
                 return opening_cache.get_or_call(
                     cache_key, lambda: client.call(model, histories[side])
                 )
-            return client.call(model, histories[side])
+            return client.call(model, histories[side]), False
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             pro_future = executor.submit(_call_side, "pro", pro_model)
             con_future = executor.submit(_call_side, "con", con_model)
-            results: dict[Side, ModelCallResult] = {
+            results: dict[Side, tuple[ModelCallResult, bool]] = {
                 "pro": pro_future.result(),
                 "con": con_future.result(),
             }
 
         round_turns: list[DebateTurn] = []
         for side, model, label in sides:
-            result = results[side]
+            result, was_cached = results[side]
             histories[side].append(_plain_msg("assistant", result.content))
             turn = DebateTurn(
                 speaker_label=label,
@@ -185,7 +188,7 @@ def run_parallel_debate(
                 side=side,
                 turn_number=round_number,
                 content=result.content,
-                metrics=result.metrics,
+                metrics=replace(result.metrics, reused=True) if was_cached else result.metrics,
             )
             round_turns.append(turn)
 

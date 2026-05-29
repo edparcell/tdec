@@ -91,8 +91,9 @@ function renderStats() {
   const debateCount = SUMMARY.debates.length;
   const modelCount = SUMMARY.models.length;
 
+  const costText = cost == null ? 'unknown' : '$' + cost.toFixed(4);
   let html = `
-    <span class="stat"><strong>$${cost.toFixed(4)}</strong> total cost</span>
+    <span class="stat"><strong>${costText}</strong> total cost</span>
     <span class="stat"><strong>${formatTime(latency)}</strong> total latency</span>
     <span class="stat"><strong>${debateCount}</strong> debates</span>
     <span class="stat"><strong>${modelCount}</strong> models</span>
@@ -231,7 +232,8 @@ function renderElo() {
   let html = '<div class="section-title">Debater Rankings</div>';
   html += '<table class="elo-table"><thead><tr><th>Model</th><th style="text-align:right">Elo</th><th style="text-align:right">Cost</th></tr></thead><tbody>';
   for (const m of debaters) {
-    html += `<tr><td class="model-name">${m.model_id}</td><td class="elo-val">${m.elo.toFixed(1)}</td><td class="elo-val">$${m.cost_usd.toFixed(4)}</td></tr>`;
+    const costCell = m.cost_usd == null ? 'unknown' : '$' + m.cost_usd.toFixed(4);
+    html += `<tr><td class="model-name">${m.model_id}</td><td class="elo-val">${m.elo.toFixed(1)}</td><td class="elo-val">${costCell}</td></tr>`;
   }
   html += '</tbody></table>';
   section.innerHTML = html;
@@ -692,13 +694,14 @@ function renderAnalysis() {
       html += `<td style="text-align:left;font-weight:500">${row.source}</td>`;
       html += `<td>${row.ss}</td>`;
       html += `<td>${row.df}</td>`;
-      html += `<td>${row.ms}</td>`;
+      html += `<td>${row.ms != null ? row.ms : '-'}</td>`;
       html += `<td>${row.f !== null ? row.f : '-'}</td>`;
       html += `<td${sig}>${row.p_value !== null ? formatPval(row.p_value) : '-'}</td>`;
       html += `<td>${row.pct_variance}%</td>`;
       html += '</tr>';
     }
     html += '</table></div>';
+    if (av.note) html += `<div class="analysis-note">${escapeHtml(av.note)}</div>`;
 
     const sigRows = av.rows.filter(r => r.significant === true);
     const nonsigRows = av.rows.filter(r => r.significant === false);
@@ -755,13 +758,14 @@ function renderComparison() {
       const sig = row.significant === true ? ' style="color:var(--accent);font-weight:600"' : '';
       html += '<tr>';
       html += `<td style="text-align:left;font-weight:500">${row.source}</td>`;
-      html += `<td>${row.ss}</td><td>${row.df}</td><td>${row.ms}</td>`;
+      html += `<td>${row.ss}</td><td>${row.df}</td><td>${row.ms != null ? row.ms : '-'}</td>`;
       html += `<td>${row.f !== null ? row.f : '-'}</td>`;
       html += `<td${sig}>${row.p_value !== null ? formatPval(row.p_value) : '-'}</td>`;
       html += `<td>${row.pct_variance}%</td>`;
       html += '</tr>';
     }
     html += '</table></div>';
+    if (cra.note) html += `<div class="analysis-note">${escapeHtml(cra.note)}</div>`;
 
     const sigRows = cra.rows.filter(r => r.significant === true);
     if (sigRows.length > 0) {

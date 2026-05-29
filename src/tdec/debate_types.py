@@ -29,6 +29,10 @@ class ModelCallMetrics:
     cost_error: str | None = None
     finish_reason: str | None = None
     response_metadata: dict[str, Any] | None = None
+    # True when this metric belongs to a cached call that was reused across
+    # debates (e.g. a shared opening). Reused metrics are excluded from
+    # run-level spend totals so reported cost reflects actual API spend.
+    reused: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,6 +181,7 @@ def _metrics_from_dict(data: dict[str, Any] | None) -> ModelCallMetrics | None:
         cost_error=data.get("cost_error"),
         finish_reason=data.get("finish_reason"),
         response_metadata=data.get("response_metadata"),
+        reused=bool(data.get("reused", False)),
     )
 
 

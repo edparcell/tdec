@@ -163,9 +163,12 @@ def test_run_tournament_writes_debates_judgements_and_summary(tmp_path: Path) ->
     run_dir = Path(summary["run_dir"])
 
     assert len(summary["debates"]) == 6
-    assert summary["total_cost_usd"] == 0.24
+    # Run-level totals count actual API spend: with reuse_openings on (the
+    # default) each debater's pro opening is computed once and reused in its
+    # other debate, so 3 of the 24 calls are reused and excluded (21 * $0.01).
+    assert summary["total_cost_usd"] == 0.21
     assert summary["errors"] == []
-    assert summary["total_latency_seconds"] == 24.0
+    assert summary["total_latency_seconds"] == 21.0
     assert summary["motions"] == [
         {
             "topic_id": "topic",

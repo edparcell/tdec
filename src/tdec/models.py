@@ -41,10 +41,14 @@ class LiteLLMClient:
             kwargs["temperature"] = model.temperature
         try:
             response = litellm.completion(**kwargs)
+            latency_seconds = perf_counter() - started
+            # Extract content inside the try: an empty choices list (e.g. a
+            # content-filtered response) would otherwise raise IndexError here,
+            # escaping ModelCallError and crashing the batch instead of being
+            # retried/recorded.
+            content: Any = response.choices[0].message.content
         except Exception as e:
             raise ModelCallError(model, e) from e
-        latency_seconds = perf_counter() - started
-        content: Any = response.choices[0].message.content
         cost_usd, cost_error = _extract_cost_info(response, model)
         return ModelCallResult(
             content="" if content is None else str(content),

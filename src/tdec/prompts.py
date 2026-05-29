@@ -89,8 +89,11 @@ class PromptSet:
         )
 
     def render_judge(self, *, transcript: DebateTranscript) -> str:
+        # Show only the anonymized A/B label, never the pro/con side. Leaking
+        # the side defeats the label-swap (relabel) bias experiment and the
+        # judge-system promise that debaters are anonymized as A and B.
         transcript_text = "\n\n".join(
-            f"{t.speaker_label} ({t.side}, turn {t.turn_number}):\n{t.content}"
+            f"Debater {t.speaker_label} (turn {t.turn_number}):\n{t.content}"
             for t in transcript.turns
         )
         return Template(self._config.judge).safe_substitute(

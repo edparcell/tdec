@@ -33,21 +33,40 @@ def load_all_judgements(run_dir: Path) -> list[Judgement]:
 
 
 def existing_judgement_keys(run_dir: Path) -> set[tuple[str, str]]:
+    # Read the ids from each file's contents rather than parsing the filename:
+    # debate ids and model ids may themselves contain "__", which breaks a
+    # filename rsplit and would cause completed judgements to be re-run on resume.
     judgements_dir = run_dir / "judgements"
     keys: set[tuple[str, str]] = set()
     for f in judgements_dir.glob("*.json"):
-        stem = f.stem
-        parts = stem.rsplit("__", 1)
-        if len(parts) == 2:
-            keys.add((parts[0], parts[1]))
+        data = json.loads(f.read_text(encoding="utf-8"))
+        debate_id = data.get("debate_id")
+        judge_model_id = data.get("judge_model_id")
+        if debate_id is not None and judge_model_id is not None:
+            keys.add((debate_id, judge_model_id))
     return keys
 
 ArtifactVerbosity = Literal["compact", "full"]
 
 
+def unique_run_dir(output_dir: Path, base_name: str) -> Path:
+    """Return output_dir/base_name, adding a numeric suffix if it already exists.
+
+    The second-resolution timestamp in run names collides when two runs start in
+    the same second; without this they would raise FileExistsError or merge into
+    one directory.
+    """
+    candidate = output_dir / base_name
+    suffix = 2
+    while candidate.exists():
+        candidate = output_dir / f"{base_name}__{suffix}"
+        suffix += 1
+    return candidate
+
+
 def make_run_dir(output_dir: Path, run_name: str) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = output_dir / f"{timestamp}__{run_name}"
+    run_dir = unique_run_dir(output_dir, f"{timestamp}__{run_name}")
     (run_dir / "debates").mkdir(parents=True)
     (run_dir / "judgements").mkdir(parents=True)
     (run_dir / "errors").mkdir(parents=True)
