@@ -2,14 +2,33 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, is_dataclass
 from time import perf_counter
 from typing import Any, Protocol
 
-import litellm
-
 from tdec.config import ModelConfig
 from tdec.debate_types import ModelCallMetrics, ModelCallResult, TokenUsage
+
+
+class _BedrockPreloadFilter(logging.Filter):
+    """Drop litellm's benign import-time AWS pre-load warnings.
+
+    On import, litellm eagerly tries to pre-load the Bedrock and SageMaker
+    event-stream decoders, which require botocore. This project talks to
+    OpenAI-style providers only and does not install botocore, so each attempt
+    logs a WARNING that is pure noise. We don't use AWS, so drop just those
+    records (installed before importing litellm so the import-time logs are
+    filtered too).
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "could not pre-load" not in record.getMessage()
+
+
+logging.getLogger("LiteLLM").addFilter(_BedrockPreloadFilter())
+
+import litellm  # noqa: E402  (imported after installing the log filter above)
 
 
 class ChatModel(Protocol):
